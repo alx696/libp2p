@@ -8,6 +8,7 @@ import (
 	"github.com/libp2p/go-libp2p-core/crypto"
 	"github.com/libp2p/go-libp2p-core/network"
 	"github.com/libp2p/go-libp2p-core/peer"
+	"github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p-quic-transport"
 	"io/ioutil"
 	"log"
@@ -106,6 +107,13 @@ func main() {
 		log.Fatalln(e)
 	}
 	log.Println("节点P2P地址:", p2pAddrs)
+
+	//开启DHT
+	katDHT, e := dht.New(ctx, node)
+	if e != nil {
+		log.Fatalln(e)
+	}
+	log.Println(katDHT.PeerID())
 
 	//设置流处
 	node.SetStreamHandler(protocolID, handleStream)
