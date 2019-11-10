@@ -49,9 +49,9 @@ func main() {
 		log.Fatalln(e)
 	}
 	log.Println("节点P2P地址:", p2pAddrs)
-
+	
 	//服务地址
-	ma, e := multiaddr.NewMultiaddr("/ip4/127.0.0.1/udp/60000/quic/ipfs/QmV3W8GtRQ8JCv9JBTFiSjpufm4US94edAHDqKe1cdY3ye")
+	ma, e := multiaddr.NewMultiaddr("/ip4/127.0.0.1/udp/60000/quic/ipfs/QmdkdubpRtDWNpuBuJxkccY7WDA1ScjVXE8EYSoDYvpbbZ")
 	if e != nil {
 		log.Fatalln(e)
 	}
