@@ -103,14 +103,13 @@ func main() {
 		libp2p.ListenAddrStrings(strings.Join([]string{"/ip4/0.0.0.0/udp/", *port, "/quic"}, "")),
 	)
 	if e != nil {
-		log.Fatalln("创建libp2p出错:", e)
+		log.Fatalln("创建节点出错:", e)
 	}
-	log.Println("节点ID:", node.ID(), "节点地址:", node.Addrs())
 
 	//打印节点P2P地址
 	p2pAddrs, e := peer.AddrInfoToP2pAddrs(&peer.AddrInfo{node.ID(), node.Addrs()})
 	if e != nil {
-		log.Fatalln(e)
+		log.Fatalln("地址转换出错:", e)
 	}
 	log.Println("节点P2P地址:", p2pAddrs)
 
@@ -123,11 +122,24 @@ func main() {
 	if e != nil {
 		log.Fatalln("创建DHT出错:", e)
 	}
+	var nodeMap = make(map[string]string)
 	go func() {
 		for {
 			for _, v := range kadDHT.RoutingTable().ListPeers() {
+				if _, exists := nodeMap[v.String()]; exists {
+					continue
+				}
+
 				localAddr := kadDHT.FindLocal(v)
-				log.Println(localAddr)
+				log.Println("DHT节点:", localAddr)
+
+				ns, e := node.NewStream(ctx, localAddr.ID, protocolID)
+				if e != nil {
+					log.Println("建流错误:", e)
+					continue
+				}
+				_, e = ns.Write([]byte("你好\n"))
+				ns.Close()
 			}
 			time.Sleep(time.Second * 6)
 		}
@@ -135,7 +147,7 @@ func main() {
 
 	//设置种点
 	//TODO 成品应该多设置几个种点, 每次只连一个, 不行才换另外一个. 一旦连到一些节点后, 可缓存下来下次先连缓存节点, 种点保底.
-	devP2pAddr, _ := multiaddr.NewMultiaddr("/dns4/test.dev.lilu.red/udp/10002/quic/ipfs/QmfFf8UjpnNtyqVSdx5GCcaEafq4s5vy1mUQdaQvZ4SSRd")
+	devP2pAddr, _ := multiaddr.NewMultiaddr("/ip4/127.0.0.1/udp/60000/quic/ipfs/QmeLLCRwdYTPdDcsJGVv4AqFFZS3yNzU2BgFsvb2NHEogr")
 	devAddr, _ := peer.AddrInfoFromP2pAddr(devP2pAddr)
 	for {
 		e = node.Connect(ctx, *devAddr)
