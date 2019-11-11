@@ -140,6 +140,8 @@ func main() {
 				}
 				_, e = ns.Write([]byte("你好\n"))
 				ns.Close()
+				log.Println("已经过流发送")
+				nodeMap[v.String()] = "已经连接"
 			}
 			time.Sleep(time.Second * 6)
 		}
