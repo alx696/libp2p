@@ -203,16 +203,15 @@ func main() {
 
 	//NAT穿越
 	log.Println("准备NAT穿越")
-	portInt, _ := strconv.Atoi(*port)
-	if portInt == 0 {
-		portInt, e = strconv.Atoi(strings.Split(node.Addrs()[0].String(), "/")[4])
+	innerPort, _ := strconv.Atoi(*port)
+	if innerPort == 0 {
+		innerPort, e = strconv.Atoi(strings.Split(node.Addrs()[0].String(), "/")[4])
 		if e != nil {
 			log.Fatalln(e)
 		}
 	}
-
-	//go-nat库
-	//企业路由器2秒, 家里路由器马上
+	var natIp string
+	var natPort int
 	natChan := nat.DiscoverNATs(ctx)
 	select {
 	case natGateway := <-natChan:
@@ -220,48 +219,23 @@ func main() {
 		if e != nil {
 			log.Fatalln(e)
 		}
-		log.Println("NAT网关公网IP:", natExternalAddress.String())
+		natIp = natExternalAddress.String()
 
-		mappedExternalPort, e := natGateway.AddPortMapping("udp", portInt, "P2P测试", time.Minute)
+		mappedExternalPort, e := natGateway.AddPortMapping("udp", innerPort, "P2P测试", time.Minute*3)
 		if e != nil {
-			log.Fatalln("NAT映射端口错误:", e)
+			log.Fatalln(e)
 		}
-		log.Println("NAT已经映射内网端口:", portInt, "为:", mappedExternalPort)
+		natPort = mappedExternalPort
 
-		//不使用时记得移除
-		_ = natGateway.DeletePortMapping("udp", portInt)
+		////不使用时记得移除
+		//_ = natGateway.DeletePortMapping("udp", innerPort)
 	}
-
-	////go-nat库
-	////H3C路由需要2分钟以上, 家里的路由5秒.
-	//natGateway, e := nat.DiscoverGateway()
-	//if e != nil {
-	//	log.Fatalln("寻找NAT错误:", e)
-	//}
-	//natExternalAddress, e := natGateway.GetExternalAddress()
-	//if e != nil {
-	//	log.Fatalln("获取NAT网关公网IP错误:", e)
-	//}
-	//log.Println("NAT网关公网IP:", natExternalAddress.String())
-
-	////go-libp2p-nat库
-	////H3C路由需要2分钟以上, 家里的路由5秒.
-	//mNAT, e := libp2pnat.DiscoverNAT(ctx)
-	//if e != nil {
-	//	log.Fatalln(e)
-	//}
-	//log.Println("已有NAT映射:", mNAT.Mappings())
-	//natMapping, e := mNAT.NewMapping("udp", portInt)
-	//if e != nil {
-	//	log.Fatalln(e)
-	//}
-	//log.Println("NAT已经映射端口:", natMapping.InternalPort(), natMapping.ExternalPort())
-	//externalAddr, e := natMapping.ExternalAddr()
-	//if e != nil {
-	//	log.Fatalln(e)
-	//}
-	//// 地址形式为IP加端口, 如 8.8.8.8:38288
-	//log.Println("NAT公网IP:", externalAddr.String())
+	natProtoName := "ip4"
+	if strings.ContainsAny(natIp, ":") {
+		natProtoName = "ip6"
+	}
+	natP2pMa, _ := multiaddr.NewMultiaddr(strings.Join([]string{"/", natProtoName, "/", natIp, "/udp/", strconv.Itoa(natPort), "/quic/ipfs/", node.ID().String()}, ""))
+	log.Println("NAT的P2P地址:", natP2pMa)
 
 	// wait for a SIGINT or SIGTERM signal
 	ch := make(chan os.Signal, 1)
@@ -269,6 +243,5 @@ func main() {
 	<-ch
 	log.Println("收到信号, 关闭...")
 
-	//_ = natMapping.Close()
 	_ = node.Close()
 }
