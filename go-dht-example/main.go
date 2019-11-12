@@ -42,9 +42,21 @@ func main() {
 	if e != nil {
 		log.Fatalln(e)
 	}
+	//间隔显示DHT节点
+	go func() {
+		for {
+			for _, v := range kadDHT.RoutingTable().ListPeers() {
+				addr := kadDHT.FindLocal(v)
+				log.Println("DHT节点:", addr)
+			}
 
+			log.Println("---")
+			time.Sleep(time.Second * 6)
+		}
+	}()
+
+	//如果设置了启发节点则连接
 	if *bootstrap != "" {
-		//如果设置了启发节点则连接
 		ma, _ := multiaddr.NewMultiaddr(*bootstrap)
 		a, _ := peer.AddrInfoFromP2pAddr(ma)
 		e := node.Connect(ctx, *a)
@@ -52,19 +64,6 @@ func main() {
 			log.Fatalln(e)
 		}
 		log.Println("已经连接节点:", *bootstrap)
-	} else {
-		//启发节点每3秒显示一次DHT路由表中的节点
-		go func() {
-			for {
-				for _, v := range kadDHT.RoutingTable().ListPeers() {
-					addr := kadDHT.FindLocal(v)
-					log.Println("DHT发现节点:", addr)
-				}
-
-				log.Println("---")
-				time.Sleep(time.Second * 3)
-			}
-		}()
 	}
 
 	// wait for a SIGINT or SIGTERM signal
