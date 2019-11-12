@@ -12,6 +12,7 @@ import (
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	libp2pquic "github.com/libp2p/go-libp2p-quic-transport"
 	"github.com/libp2p/go-nat"
+	//libp2pnat "github.com/libp2p/go-libp2p-nat"
 	"github.com/multiformats/go-multiaddr"
 	"io/ioutil"
 	"log"
@@ -201,9 +202,17 @@ func main() {
 	}
 
 	//NAT穿越
-	//TODO 测试发现如果使用随机端口则远端无法连接?
 	log.Println("准备NAT穿越")
-	//企业路由器有效(2秒即可找到)
+	portInt, _ := strconv.Atoi(*port)
+	if portInt == 0 {
+		portInt, e = strconv.Atoi(strings.Split(node.Addrs()[0].String(), "/")[4])
+		if e != nil {
+			log.Fatalln(e)
+		}
+	}
+
+	//go-nat库
+	//企业路由器2秒, 家里路由器马上
 	natChan := nat.DiscoverNATs(ctx)
 	select {
 	case natGateway := <-natChan:
@@ -213,20 +222,18 @@ func main() {
 		}
 		log.Println("NAT网关公网IP:", natExternalAddress.String())
 
-		portInt, _ := strconv.Atoi(*port)
-		if portInt == 0 {
-			portInt, e = strconv.Atoi(strings.Split(node.Addrs()[0].String(), "/")[4])
-			if e != nil {
-				log.Fatalln(e)
-			}
-		}
-		mappedExternalPort, e := natGateway.AddPortMapping("udp", portInt, "P2P测试", time.Hour)
+		mappedExternalPort, e := natGateway.AddPortMapping("udp", portInt, "P2P测试", time.Minute)
 		if e != nil {
 			log.Fatalln("NAT映射端口错误:", e)
 		}
 		log.Println("NAT已经映射内网端口:", portInt, "为:", mappedExternalPort)
+
+		//不使用时记得移除
+		_ = natGateway.DeletePortMapping("udp", portInt)
 	}
-	////家用路由器有效
+
+	////go-nat库
+	////H3C路由需要2分钟以上, 家里的路由5秒.
 	//natGateway, e := nat.DiscoverGateway()
 	//if e != nil {
 	//	log.Fatalln("寻找NAT错误:", e)
@@ -237,14 +244,31 @@ func main() {
 	//}
 	//log.Println("NAT网关公网IP:", natExternalAddress.String())
 
+	////go-libp2p-nat库
+	////H3C路由需要2分钟以上, 家里的路由5秒.
+	//mNAT, e := libp2pnat.DiscoverNAT(ctx)
+	//if e != nil {
+	//	log.Fatalln(e)
+	//}
+	//log.Println("已有NAT映射:", mNAT.Mappings())
+	//natMapping, e := mNAT.NewMapping("udp", portInt)
+	//if e != nil {
+	//	log.Fatalln(e)
+	//}
+	//log.Println("NAT已经映射端口:", natMapping.InternalPort(), natMapping.ExternalPort())
+	//externalAddr, e := natMapping.ExternalAddr()
+	//if e != nil {
+	//	log.Fatalln(e)
+	//}
+	//// 地址形式为IP加端口, 如 8.8.8.8:38288
+	//log.Println("NAT公网IP:", externalAddr.String())
+
 	// wait for a SIGINT or SIGTERM signal
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
 	<-ch
 	log.Println("收到信号, 关闭...")
 
-	e = node.Close()
-	if e != nil {
-		log.Fatalln(e)
-	}
+	//_ = natMapping.Close()
+	_ = node.Close()
 }
