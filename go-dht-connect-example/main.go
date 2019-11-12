@@ -61,31 +61,12 @@ func handleStream(stream network.Stream) {
 	txt, e := reader.ReadString('\n')
 	txt = strings.Replace(txt, "\n", "", -1)
 	if e != nil {
-		log.Println("读取错误:", e)
+		log.Println("处理流读取错误:", e)
 	} else {
-		log.Println("读取内容:", txt)
+		log.Println("处理流读取内容:", txt)
 	}
-
-	_, e = stream.Write([]byte(strings.Join([]string{"远程地址:", clientAddr, "\n"}, "")))
-	if e != nil {
-		log.Println("写入错误:", e)
-	}
-	log.Println("结果已经返回")
 
 	_ = stream.Close()
-
-	////继续读取(用于检测客户断开)
-	//for {
-	//	txt, e := reader.ReadString('\n')
-	//	txt = strings.Replace(txt, "\n", "", -1)
-	//	if e != nil {
-	//		log.Println("读取错误:", e)
-	//		break
-	//	} else {
-	//		log.Println("读取内容:", txt)
-	//	}
-	//}
-	//log.Println("客户断开:", clientAddr)
 }
 
 func main() {
@@ -139,63 +120,54 @@ func main() {
 		log.Fatalln(e)
 	}
 
+	go func() {
+		for {
+			for _, v := range kadDHT.RoutingTable().ListPeers() {
+				addr := kadDHT.FindLocal(v)
+				log.Println("DHT节点:", addr)
+
+				//发送问候
+				s, e := node.NewStream(ctx, v, PROTOCOL_ID)
+				if e != nil {
+					log.Println("DHT建流错误:", v, e)
+					continue
+				}
+				_, e = s.Write([]byte("你好, DHT节点\n"))
+				if e != nil {
+					log.Println("DHT发送错误:", v, e)
+					continue
+				}
+				_ = s.Close()
+				log.Println("DHT发送完毕")
+			}
+
+			time.Sleep(time.Second * 6)
+		}
+	}()
+
+	//如果设置了启发节点则连接
 	if *bootstrap != "" {
-		//如果设置了启发节点则连接
 		ma, _ := multiaddr.NewMultiaddr(*bootstrap)
 		a, _ := peer.AddrInfoFromP2pAddr(ma)
+
+		//连接
 		e := node.Connect(ctx, *a)
 		if e != nil {
 			log.Fatalln(e)
 		}
-		log.Println("已经连接节点:", *bootstrap)
+		log.Println("已经连接启发节点:", *bootstrap)
 
-		//发送问候
+		//创建流, 发送
 		s, e := node.NewStream(ctx, a.ID, PROTOCOL_ID)
 		if e != nil {
-			log.Fatalln("建流错误:", a.ID, e)
+			log.Fatalln("启发节点建流错误:", e)
 		}
 		_, e = s.Write([]byte("Hi! 启发节点\n"))
 		if e != nil {
-			log.Fatalln("发送错误:", a.ID, e)
+			log.Fatalln("启发节点发送错误:", e)
 		}
 		_ = s.Close()
-		log.Println("已经发送")
-	} else {
-		//启发节点每3秒显示一次DHT路由表中的节点
-		var nodeMap = make(map[string]string)
-
-		go func() {
-			for {
-				for _, v := range kadDHT.RoutingTable().ListPeers() {
-					if _, exists := nodeMap[v.String()]; exists {
-						continue
-					}
-
-					addr := kadDHT.FindLocal(v)
-					log.Println("DHT发现节点:", addr)
-
-					//发送问候
-					s, e := node.NewStream(ctx, v, PROTOCOL_ID)
-					if e != nil {
-						log.Println("建流错误:", v, e)
-						continue
-					}
-					_, e = s.Write([]byte("你好, DHT节点\n"))
-					if e != nil {
-						log.Println("发送错误:", v, e)
-						continue
-					}
-					_ = s.Close()
-					log.Println("已经发送")
-
-					//缓存节点
-					nodeMap[v.String()] = ""
-				}
-
-				log.Println("已连节点数量:", len(nodeMap))
-				time.Sleep(time.Second * 3)
-			}
-		}()
+		log.Println("启发节点发送完毕")
 	}
 
 	// wait for a SIGINT or SIGTERM signal
@@ -204,8 +176,5 @@ func main() {
 	<-ch
 	log.Println("收到信号, 关闭...")
 
-	e = node.Close()
-	if e != nil {
-		log.Fatalln(e)
-	}
+	_ = node.Close()
 }
