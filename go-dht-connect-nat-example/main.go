@@ -209,21 +209,22 @@ func main() {
 	case natGateway := <-natChan:
 		natExternalAddress, e := natGateway.GetExternalAddress()
 		if e != nil {
-			log.Fatalln("获取NAT网关公网IP错误:", e)
+			log.Fatalln(e)
 		}
 		log.Println("NAT网关公网IP:", natExternalAddress.String())
 
 		portInt, _ := strconv.Atoi(*port)
 		if portInt == 0 {
-			portInt, _ = strconv.Atoi(strings.Split(node.Addrs()[0].String(), "/")[3])
+			portInt, e = strconv.Atoi(strings.Split(node.Addrs()[0].String(), "/")[4])
+			if e != nil {
+				log.Fatalln(e)
+			}
 		}
-		mappedExternalPort, e := natGateway.AddPortMapping("udp", portInt, "p2p测试", time.Hour)
+		mappedExternalPort, e := natGateway.AddPortMapping("udp", portInt, "P2P测试", time.Hour)
 		if e != nil {
 			log.Fatalln("NAT映射端口错误:", e)
 		}
 		log.Println("NAT已经映射内网端口:", portInt, "为:", mappedExternalPort)
-
-		//TODO 如果将NAT端口通知给其它节点?
 	}
 	////家用路由器有效
 	//natGateway, e := nat.DiscoverGateway()
