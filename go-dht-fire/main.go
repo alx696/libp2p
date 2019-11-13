@@ -28,7 +28,6 @@ const (
 	CONFIG_DIR            = "./config"
 	RSA_FILE_PATH_PRIVATE = "./config/rsa-private"
 	RSA_FILE_PATH_PUBLIC  = "./config/rsa-public"
-	PROTOCOL_ID           = "/p2p/dht"
 )
 
 func rsaKey() (prKey crypto.PrivKey, puKey crypto.PubKey) {
@@ -126,6 +125,7 @@ func main() {
 		log.Println("已经连接启发节点:", *bootstrap)
 	}
 
+	//显示DHT节点
 	go func() {
 		for {
 			for _, v := range kadDHT.RoutingTable().ListPeers() {

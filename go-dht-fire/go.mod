@@ -5,6 +5,7 @@ go 1.13
 require (
 	github.com/libp2p/go-libp2p v0.4.1
 	github.com/libp2p/go-libp2p-core v0.2.4
+	github.com/libp2p/go-libp2p-discovery v0.1.0
 	github.com/libp2p/go-libp2p-kad-dht v0.3.0
 	github.com/libp2p/go-libp2p-mplex v0.2.1
 	github.com/libp2p/go-libp2p-quic-transport v0.2.0
