@@ -62,6 +62,7 @@ func main() {
 	//指定端口,否则随机
 	port := flag.String("port", "0", "")
 	//启发节点
+	//必须是P2P地址, 即 https://github.com/multiformats/multiaddr#protocols (含/ipfs/Qm...)
 	bootstrap := flag.String("bootstrap", "", "")
 	flag.Parse()
 
@@ -114,11 +115,17 @@ func main() {
 
 	//如果设置了启发节点则连接
 	if *bootstrap != "" {
-		bootstrapMa, _ := multiaddr.NewMultiaddr(*bootstrap)
-		bootstrapA, _ := peer.AddrInfoFromP2pAddr(bootstrapMa)
+		bootstrapMa, e := multiaddr.NewMultiaddr(*bootstrap)
+		if e != nil {
+			log.Fatalln(e)
+		}
+		bootstrapA, e := peer.AddrInfoFromP2pAddr(bootstrapMa)
+		if e != nil {
+			log.Fatalln(e)
+		}
 
 		//连接
-		e := node.Connect(ctx, *bootstrapA)
+		e = node.Connect(ctx, *bootstrapA)
 		if e != nil {
 			log.Fatalln(e)
 		}
@@ -133,7 +140,7 @@ func main() {
 				log.Println("DHT节点:", dhtPeerAddr)
 			}
 
-			time.Sleep(time.Second * 3)
+			time.Sleep(time.Second * 6)
 		}
 	}()
 
