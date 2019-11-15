@@ -138,8 +138,7 @@ func main() {
 			kadDHT.RefreshRoutingTable()
 
 			for _, peerId := range kadDHT.RoutingTable().ListPeers() {
-				addrInfo := kadDHT.FindLocal(peerId)
-				log.Println("DHT节点:", addrInfo)
+				log.Println("DHT节点:", peerId)
 			}
 
 			time.Sleep(time.Second * 6)
