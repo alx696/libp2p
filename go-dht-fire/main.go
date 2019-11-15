@@ -140,6 +140,7 @@ func main() {
 			for _, peerId := range kadDHT.RoutingTable().ListPeers() {
 				log.Println("DHT节点:", peerId)
 			}
+			log.Println("---")
 
 			time.Sleep(time.Second * 6)
 		}
