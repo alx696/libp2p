@@ -119,13 +119,13 @@ func main() {
 		if e != nil {
 			log.Fatalln(e)
 		}
-		bootstrapA, e := peer.AddrInfoFromP2pAddr(bootstrapMa)
+		bootstrapAddrInfo, e := peer.AddrInfoFromP2pAddr(bootstrapMa)
 		if e != nil {
 			log.Fatalln(e)
 		}
 
 		//连接
-		e = node.Connect(ctx, *bootstrapA)
+		e = node.Connect(ctx, *bootstrapAddrInfo)
 		if e != nil {
 			log.Fatalln(e)
 		}
@@ -135,9 +135,11 @@ func main() {
 	//显示DHT节点
 	go func() {
 		for {
-			for _, v := range kadDHT.RoutingTable().ListPeers() {
-				dhtPeerAddr := kadDHT.FindLocal(v)
-				log.Println("DHT节点:", dhtPeerAddr)
+			kadDHT.RefreshRoutingTable()
+
+			for _, peerId := range kadDHT.RoutingTable().ListPeers() {
+				addrInfo := kadDHT.FindLocal(peerId)
+				log.Println("DHT节点:", addrInfo)
 			}
 
 			time.Sleep(time.Second * 6)
