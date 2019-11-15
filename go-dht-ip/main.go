@@ -1,13 +1,16 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"flag"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p-core/crypto"
 	"github.com/libp2p/go-libp2p-core/host"
+	"github.com/libp2p/go-libp2p-core/network"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/libp2p/go-libp2p-core/routing"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
@@ -25,14 +28,18 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 )
 
 const (
 	CONFIG_DIR            = "./config"
 	RSA_FILE_PATH_PRIVATE = "./config/rsa-private"
 	RSA_FILE_PATH_PUBLIC  = "./config/rsa-public"
+	PROTOCOL_ID           = "/p2p/dht/ip"
 )
 
+var ctx context.Context
+var node host.Host
 var kadDHT *dht.IpfsDHT
 
 func rsaKey() (prKey crypto.PrivKey, puKey crypto.PubKey) {
@@ -103,9 +110,48 @@ func isInnerIp6(ipText string) bool {
 	return false
 }
 
+func handleStream(stream network.Stream) {
+	clientAddr := stream.Conn().RemoteMultiaddr().String()
+	log.Println("处理流:", clientAddr)
+
+	reader := bufio.NewReader(stream)
+	txt, e := reader.ReadString('\n')
+	txt = strings.Replace(txt, "\n", "", -1)
+	if e != nil {
+		log.Println("处理流读取错误:", e)
+	} else {
+		log.Println("处理流读取内容:", txt)
+	}
+
+	_ = stream.Close()
+}
+
+func tellMeYourIp(id peer.ID) {
+	//创建流, 发送
+	s, e := node.NewStream(ctx, id, PROTOCOL_ID)
+	if e != nil {
+		log.Fatalln(e)
+	}
+	_, e = s.Write([]byte("告诉我你的IP\n"))
+	if e != nil {
+		log.Fatalln(e)
+	}
+	reader := bufio.NewReader(s)
+	txt, e := reader.ReadString('\n')
+	txt = strings.Replace(txt, "\n", "", -1)
+	if e != nil {
+		log.Fatalln(e)
+	} else {
+		log.Println("处理流读取内容:", txt)
+	}
+	_ = s.Close()
+	//TODO 互联网上节点发现不稳定如何处理?
+}
+
 func webServer(port string) {
 	http.HandleFunc("/", func(writer http.ResponseWriter, request *http.Request) {
-		//获取DHT节点ID
+		//获取DHT节点
+		kadDHT.RefreshRoutingTable()
 		peerIds := kadDHT.RoutingTable().ListPeers()
 		//获取请求ID
 		id := request.URL.Query().Get("id")
@@ -118,28 +164,44 @@ func webServer(port string) {
 				_, _ = writer.Write([]byte(e.Error()))
 				return
 			}
-			_ = t.Execute(writer, len(peerIds))
+			jsonBytes, e := json.Marshal(peerIds)
+			if e != nil {
+				writer.WriteHeader(http.StatusInternalServerError)
+				_, _ = writer.Write([]byte(e.Error()))
+				return
+			}
+			_ = t.Execute(writer, string(jsonBytes))
 		} else {
 			//设置ID时返回ID地址信息
-			ip := "暂无IP"
+			ip := "暂无"
+
+			//获取ID地址信息
+			var addrInfo *peer.AddrInfo
 			for _, peerId := range peerIds {
 				if peerId.String() == id {
-					addrInfo := kadDHT.FindLocal(peerId)
-					log.Println(addrInfo)
-
-					//提取IP
-					for _, ma := range addrInfo.Addrs {
-						maSplit := strings.Split(ma.String(), "/")
-						//ip4
-						if maSplit[1] == "ip4" && !isInnerIp4(maSplit[2]) {
-							ip = maSplit[2]
-						} else if maSplit[1] == "ip6" && !isInnerIp6(maSplit[2]) {
-							//ip6
-							ip = maSplit[2]
-						}
-					}
-
+					peerLocal := kadDHT.FindLocal(peerId)
+					addrInfo = &peerLocal
 					break
+				}
+			}
+
+			if addrInfo != nil {
+				log.Println("DHT节点地址信息:", addrInfo)
+
+				//尝试从地址中提取IP
+				for _, ma := range addrInfo.Addrs {
+					maSplit := strings.Split(ma.String(), "/")
+					//ip4
+					if maSplit[1] == "ip4" && !isInnerIp4(maSplit[2]) {
+						ip = maSplit[2]
+					} else if maSplit[1] == "ip6" && !isInnerIp6(maSplit[2]) {
+						//ip6
+						ip = maSplit[2]
+					}
+				}
+
+				if ip == "暂无" {
+					tellMeYourIp(addrInfo.ID)
 				}
 			}
 
@@ -163,8 +225,8 @@ func main() {
 
 	//指定端口,否则随机
 	port := flag.String("port", "0", "")
-	//指定web端口
-	webPort := flag.String("web-port", "60000", "")
+	//指定web端口, 否则无web服务
+	webPort := flag.String("web-port", "", "")
 	//启发节点
 	//必须是P2P地址, 即 https://github.com/multiformats/multiaddr#protocols (含/ipfs/Qm...)
 	bootstrap := flag.String("bootstrap", "", "")
@@ -180,7 +242,7 @@ func main() {
 	}
 
 	//创建上下文
-	ctx := context.Background()
+	ctx = context.Background()
 
 	//DHT定义
 	newDHT := func(h host.Host) (routing.PeerRouting, error) {
@@ -190,7 +252,7 @@ func main() {
 	}
 
 	//创建节点
-	node, e := libp2p.New(
+	node, e = libp2p.New(
 		ctx,
 		libp2p.Identity(prKey),               //保持私玥(节点ID)
 		libp2p.Transport(quicTransport),      //使用QUIC传输
@@ -216,6 +278,9 @@ func main() {
 	}
 	log.Println("节点:", p2pAddrs)
 
+	//设置流处
+	node.SetStreamHandler(PROTOCOL_ID, handleStream)
+
 	//如果设置了启发节点则连接
 	if *bootstrap != "" {
 		bootstrapMa, e := multiaddr.NewMultiaddr(*bootstrap)
@@ -235,8 +300,24 @@ func main() {
 		log.Println("已经连接启发节点:", *bootstrap)
 	}
 
+	//显示DHT节点
+	go func() {
+		for {
+			kadDHT.RefreshRoutingTable()
+
+			for _, peerId := range kadDHT.RoutingTable().ListPeers() {
+				addrInfo := kadDHT.FindLocal(peerId)
+				log.Println("DHT节点:", addrInfo)
+			}
+
+			time.Sleep(time.Second * 6)
+		}
+	}()
+
 	//启动Web服务
-	go webServer(*webPort)
+	if *webPort != "" {
+		go webServer(*webPort)
+	}
 
 	// wait for a SIGINT or SIGTERM signal
 	ch := make(chan os.Signal, 1)
