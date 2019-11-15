@@ -88,11 +88,15 @@ func isInnerIp4(ip string) bool {
 // 检测IP是否为内网IP6
 func isInnerIp6(ipText string) bool {
 	ip := net.ParseIP(ipText)
-	_, ipv6Net, e := net.ParseCIDR("fe80::/10")
+	_, zeroNet, e := net.ParseCIDR("::/0")
 	if e != nil {
 		log.Fatalln(e)
 	}
-	if ipv6Net.Contains(ip) {
+	_, fe80Net, e := net.ParseCIDR("fe80::/0")
+	if e != nil {
+		log.Fatalln(e)
+	}
+	if fe80Net.Contains(ip) || zeroNet.Contains(ip) {
 		return true
 	}
 
@@ -117,7 +121,7 @@ func webServer(port string) {
 			_ = t.Execute(writer, len(peerIds))
 		} else {
 			//设置ID时返回ID地址信息
-			ip := "离线状态"
+			ip := "暂无IP"
 			for _, peerId := range peerIds {
 				if peerId.String() == id {
 					addrInfo := kadDHT.FindLocal(peerId)
@@ -210,7 +214,7 @@ func main() {
 	if e != nil {
 		log.Fatalln(e)
 	}
-	log.Println("节点:", p2pAddrs[0])
+	log.Println("节点:", p2pAddrs)
 
 	//如果设置了启发节点则连接
 	if *bootstrap != "" {
