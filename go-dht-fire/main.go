@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"flag"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p-core/crypto"
 	"github.com/libp2p/go-libp2p-core/host"
+	"github.com/libp2p/go-libp2p-core/network"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/libp2p/go-libp2p-core/routing"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
@@ -21,14 +24,18 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
-	"time"
 )
 
 const (
 	CONFIG_DIR            = "./config"
 	RSA_FILE_PATH_PRIVATE = "./config/rsa-private"
 	RSA_FILE_PATH_PUBLIC  = "./config/rsa-public"
+	PROTOCOL_ID           = "/p2p/dht"
 )
+
+var ctx context.Context
+var kadDHT *dht.IpfsDHT
+var node host.Host
 
 func rsaKey() (prKey crypto.PrivKey, puKey crypto.PubKey) {
 	_, e := os.Stat(CONFIG_DIR)
@@ -55,6 +62,118 @@ func rsaKey() (prKey crypto.PrivKey, puKey crypto.PubKey) {
 	return
 }
 
+func handleStream(stream network.Stream) {
+	streamPeerId := stream.Conn().RemotePeer().String()
+	streamPeerMa := stream.Conn().RemoteMultiaddr().String()
+	log.Println("流处:", streamPeerId, streamPeerMa)
+
+	//读取内容
+	reader := bufio.NewReader(stream)
+	txt, e := reader.ReadString('\n')
+	if e != nil {
+		log.Println(e)
+		return
+	}
+	txt = strings.Replace(txt, "\n", "", -1)
+	log.Println(txt)
+
+	switch txt {
+
+	case "上线":
+		//返回当前其它所有节点
+		jsonText := "[]"
+		var idArray []string
+		kadDHT.RefreshRoutingTable()
+		for _, peerId := range kadDHT.RoutingTable().ListPeers() {
+			if peerId.String() == streamPeerId {
+				continue
+			}
+
+			idBytes, e := peerId.MarshalText()
+			if e != nil {
+				log.Println(e)
+				continue
+			}
+			idArray = append(idArray, string(idBytes))
+		}
+		if len(idArray) > 0 {
+			jsonBytes, e := json.Marshal(idArray)
+			if e != nil {
+				log.Println(e)
+				return
+			}
+			jsonText = string(jsonBytes)
+		}
+		_, e = stream.Write([]byte(strings.Join([]string{jsonText, "\n"}, "")))
+		if e != nil {
+			log.Println(e)
+			return
+		}
+
+	case "你好":
+		_, e = stream.Write([]byte(strings.Join([]string{streamPeerMa, "\n"}, "")))
+		if e != nil {
+			log.Println(e)
+			return
+		}
+
+	}
+}
+
+func updatePeer(pid peer.ID) []string {
+	var idArray []string
+	s, e := node.NewStream(ctx, pid, PROTOCOL_ID)
+	if e != nil {
+		log.Println(e)
+		return idArray
+	}
+	_, e = s.Write([]byte("上线\n"))
+	if e != nil {
+		log.Println(e)
+		return idArray
+	}
+	reader := bufio.NewReader(s)
+	txt, e := reader.ReadString('\n')
+	if e != nil {
+		log.Println(e)
+		return idArray
+	}
+	txt = strings.Replace(txt, "\n", "", -1)
+	e = json.Unmarshal([]byte(txt), &idArray)
+	if e != nil {
+		log.Println(e)
+		return idArray
+	}
+	return idArray
+}
+
+func sayHi(idText string) {
+	ai := peer.AddrInfo{}
+	e := ai.ID.UnmarshalText([]byte(idText))
+	if e != nil {
+		log.Println(e)
+		return
+	}
+	s, e := node.NewStream(ctx, ai.ID, PROTOCOL_ID)
+	if e != nil {
+		log.Println(e)
+		return
+	}
+	_, e = s.Write([]byte("你好\n"))
+	if e != nil {
+		log.Println(e)
+		return
+	}
+	reader := bufio.NewReader(s)
+	txt, e := reader.ReadString('\n')
+	if e != nil {
+		log.Println(e)
+		return
+	}
+	txt = strings.Replace(txt, "\n", "", -1)
+	log.Println(txt)
+}
+
 // 参考 https://github.com/libp2p/go-libp2p-examples/blob/b7ac9e91865656b3ec13d18987a09779adad49dc/ipfs-camp-2019/06-Pubsub/main.go
 func main() {
 	log.Println("DHT星星之火")
@@ -76,10 +195,9 @@ func main() {
 	}
 
 	//创建上下文
-	ctx := context.Background()
+	ctx = context.Background()
 
 	//DHT定义
-	var kadDHT *dht.IpfsDHT
 	newDHT := func(h host.Host) (routing.PeerRouting, error) {
 		var err error
 		kadDHT, err = dht.New(ctx, h)
@@ -87,7 +205,7 @@ func main() {
 	}
 
 	//创建节点
-	node, e := libp2p.New(
+	node, e = libp2p.New(
 		ctx,
 		libp2p.Identity(prKey),               //保持私玥(节点ID)
 		libp2p.Transport(quicTransport),      //使用QUIC传输
@@ -113,6 +231,8 @@ func main() {
 	}
 	log.Println("节点:", p2pAddrs[0])
 
+	node.SetStreamHandler(PROTOCOL_ID, handleStream)
+
 	//如果设置了启发节点则连接
 	if *bootstrap != "" {
 		bootstrapMa, e := multiaddr.NewMultiaddr(*bootstrap)
@@ -130,21 +250,27 @@ func main() {
 			log.Fatalln(e)
 		}
 		log.Println("已经连接启发节点:", *bootstrap)
+
+		//发送
+		idArray := updatePeer(bootstrapAddrInfo.ID)
+		for _, maText := range idArray {
+			sayHi(maText)
+		}
 	}
 
-	//显示DHT节点
-	go func() {
-		for {
-			kadDHT.RefreshRoutingTable()
-
-			for _, peerId := range kadDHT.RoutingTable().ListPeers() {
-				log.Println("DHT节点:", peerId)
-			}
-			log.Println("---")
-
-			time.Sleep(time.Second * 6)
-		}
-	}()
+	////显示DHT节点
+	//go func() {
+	//	for {
+	//		kadDHT.RefreshRoutingTable()
+	//
+	//		for _, peerId := range kadDHT.RoutingTable().ListPeers() {
+	//			log.Println("DHT节点:", peerId)
+	//		}
+	//		log.Println("---")
+	//
+	//		time.Sleep(time.Second * 6)
+	//	}
+	//}()
 
 	// wait for a SIGINT or SIGTERM signal
 	ch := make(chan os.Signal, 1)
