@@ -193,6 +193,10 @@ func bootstrap(maText string) error {
 	}
 	txt = strings.Replace(txt, "\n", "", -1)
 	log.Println("拿到引导数据:", txt)
+	e = s.Reset()
+	if e != nil {
+		return e
+	}
 
 	//更新节点
 	updatePeer(txt)
@@ -233,6 +237,11 @@ func sayHi(maText string) {
 	}
 	txt = strings.Replace(txt, "\n", "", -1)
 	log.Println("Hi收到回复:", txt)
+	e = s.Reset()
+	if e != nil {
+		log.Println(e)
+		return
+	}
 }
 
 // 参考 https://github.com/libp2p/go-libp2p-examples/blob/b7ac9e91865656b3ec13d18987a09779adad49dc/ipfs-camp-2019/06-Pubsub/main.go
