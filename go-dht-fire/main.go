@@ -23,7 +23,9 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 )
 
 const (
@@ -33,9 +35,11 @@ const (
 	PROTOCOL_ID           = "/p2p/dht"
 )
 
+var m sync.RWMutex
 var ctx context.Context
 var kadDHT *dht.IpfsDHT
 var node host.Host
+var peerIpfsMap = make(map[string]string)
 
 func rsaKey() (prKey crypto.PrivKey, puKey crypto.PubKey) {
 	_, e := os.Stat(CONFIG_DIR)
@@ -62,6 +66,23 @@ func rsaKey() (prKey crypto.PrivKey, puKey crypto.PubKey) {
 	return
 }
 
+// P2P地址转地址信息
+func textToAddrInfo(text string) (*peer.AddrInfo, error) {
+	ai := &peer.AddrInfo{}
+
+	ma, e := multiaddr.NewMultiaddr(text)
+	if e != nil {
+		return ai, e
+	}
+	ai, e = peer.AddrInfoFromP2pAddr(ma)
+	if e != nil {
+		return ai, e
+	}
+
+	return ai, nil
+}
+
+// 流处
 func handleStream(stream network.Stream) {
 	streamPeerId := stream.Conn().RemotePeer().String()
 	streamPeerMa := stream.Conn().RemoteMultiaddr().String()
@@ -79,23 +100,26 @@ func handleStream(stream network.Stream) {
 
 	switch txt {
 
-	case "上线":
-		//返回当前其它所有节点
-		jsonText := "[]"
+	case "引导":
+		//缓存连接节点地址
+		m.Lock()
+		peerIpfsMap[streamPeerId] = strings.Join([]string{streamPeerMa, "/ipfs/", streamPeerId}, "")
+		m.Unlock()
+
+		//获取现有节点地址
 		var idArray []string
-		kadDHT.RefreshRoutingTable()
-		for _, peerId := range kadDHT.RoutingTable().ListPeers() {
-			if peerId.String() == streamPeerId {
+		m.RLock()
+		for k, v := range peerIpfsMap {
+			if k == streamPeerId {
 				continue
 			}
 
-			idBytes, e := peerId.MarshalText()
-			if e != nil {
-				log.Println(e)
-				continue
-			}
-			idArray = append(idArray, string(idBytes))
+			idArray = append(idArray, v)
 		}
+		m.RUnlock()
+
+		//返回现有节点地址
+		jsonText := "[]"
 		if len(idArray) > 0 {
 			jsonBytes, e := json.Marshal(idArray)
 			if e != nil {
@@ -111,7 +135,7 @@ func handleStream(stream network.Stream) {
 		}
 
 	case "你好":
-		_, e = stream.Write([]byte(strings.Join([]string{streamPeerMa, "\n"}, "")))
+		_, e = stream.Write([]byte("Fine!\n"))
 		if e != nil {
 			log.Println(e)
 			return
@@ -120,40 +144,77 @@ func handleStream(stream network.Stream) {
 	}
 }
 
-func updatePeer(pid peer.ID) []string {
-	var idArray []string
-	s, e := node.NewStream(ctx, pid, PROTOCOL_ID)
-	if e != nil {
-		log.Println(e)
-		return idArray
-	}
-	_, e = s.Write([]byte("上线\n"))
-	if e != nil {
-		log.Println(e)
-		return idArray
-	}
-	reader := bufio.NewReader(s)
-	txt, e := reader.ReadString('\n')
-	if e != nil {
-		log.Println(e)
-		return idArray
-	}
-	txt = strings.Replace(txt, "\n", "", -1)
-	e = json.Unmarshal([]byte(txt), &idArray)
-	if e != nil {
-		log.Println(e)
-		return idArray
-	}
-	return idArray
-}
-
-func sayHi(idText string) {
-	ai := peer.AddrInfo{}
-	e := ai.ID.UnmarshalText([]byte(idText))
+// 更新节点
+func updatePeer(jsonText string) {
+	var maTextArray []string
+	e := json.Unmarshal([]byte(jsonText), &maTextArray)
 	if e != nil {
 		log.Println(e)
 		return
 	}
+
+	for _, v := range maTextArray {
+		addrInfo, e := textToAddrInfo(v)
+		if e != nil {
+			log.Println(e)
+			continue
+		}
+		peerIpfsMap[addrInfo.ID.String()] = v
+	}
+}
+
+// 引导
+func bootstrap(maText string) error {
+	ai, e := textToAddrInfo(maText)
+	if e != nil {
+		return e
+	}
+
+	//连接
+	e = node.Connect(ctx, *ai)
+	if e != nil {
+		return e
+	}
+	log.Println("已经连接启发节点:", maText)
+
+	//获取引导数据
+	s, e := node.NewStream(ctx, ai.ID, PROTOCOL_ID)
+	if e != nil {
+		return e
+	}
+	_, e = s.Write([]byte("引导\n"))
+	if e != nil {
+		return e
+	}
+	reader := bufio.NewReader(s)
+	txt, e := reader.ReadString('\n')
+	if e != nil {
+		return e
+	}
+	txt = strings.Replace(txt, "\n", "", -1)
+	log.Println("拿到引导数据:", txt)
+
+	//更新节点
+	updatePeer(txt)
+
+	return nil
+}
+
+// 问候
+func sayHi(maText string) {
+	ai, e := textToAddrInfo(maText)
+	if e != nil {
+		return
+	}
+	log.Println("问候:", ai)
+
+	//连接
+	e = node.Connect(ctx, *ai)
+	if e != nil {
+		return
+	}
+	log.Println("已经连接启发节点:", maText)
+
 	s, e := node.NewStream(ctx, ai.ID, PROTOCOL_ID)
 	if e != nil {
 		log.Println(e)
@@ -171,7 +232,7 @@ func sayHi(idText string) {
 		return
 	}
 	txt = strings.Replace(txt, "\n", "", -1)
-	log.Println(txt)
+	log.Println("Hi收到回复:", txt)
 }
 
 // 参考 https://github.com/libp2p/go-libp2p-examples/blob/b7ac9e91865656b3ec13d18987a09779adad49dc/ipfs-camp-2019/06-Pubsub/main.go
@@ -182,7 +243,7 @@ func main() {
 	port := flag.String("port", "0", "")
 	//启发节点
 	//必须是P2P地址, 即 https://github.com/multiformats/multiaddr#protocols (含/ipfs/Qm...)
-	bootstrap := flag.String("bootstrap", "", "")
+	bootstrapFlag := flag.String("bootstrap", "", "")
 	flag.Parse()
 
 	//生成密钥
@@ -233,44 +294,32 @@ func main() {
 
 	node.SetStreamHandler(PROTOCOL_ID, handleStream)
 
-	//如果设置了启发节点则连接
-	if *bootstrap != "" {
-		bootstrapMa, e := multiaddr.NewMultiaddr(*bootstrap)
+	//如果设置了引导节点则连接
+	if *bootstrapFlag != "" {
+		e := bootstrap(*bootstrapFlag)
 		if e != nil {
-			log.Fatalln(e)
-		}
-		bootstrapAddrInfo, e := peer.AddrInfoFromP2pAddr(bootstrapMa)
-		if e != nil {
-			log.Fatalln(e)
+			log.Println(e)
 		}
 
-		//连接
-		e = node.Connect(ctx, *bootstrapAddrInfo)
-		if e != nil {
-			log.Fatalln(e)
-		}
-		log.Println("已经连接启发节点:", *bootstrap)
-
-		//发送
-		idArray := updatePeer(bootstrapAddrInfo.ID)
-		for _, maText := range idArray {
-			sayHi(maText)
+		//进行一次连接和通信, 触发DHT列表刷新
+		for _, v := range peerIpfsMap {
+			sayHi(v)
 		}
 	}
 
-	////显示DHT节点
-	//go func() {
-	//	for {
-	//		kadDHT.RefreshRoutingTable()
-	//
-	//		for _, peerId := range kadDHT.RoutingTable().ListPeers() {
-	//			log.Println("DHT节点:", peerId)
-	//		}
-	//		log.Println("---")
-	//
-	//		time.Sleep(time.Second * 6)
-	//	}
-	//}()
+	//显示DHT节点
+	go func() {
+		for {
+			kadDHT.RefreshRoutingTable()
+
+			for _, peerId := range kadDHT.RoutingTable().ListPeers() {
+				log.Println("DHT节点:", peerId)
+			}
+			log.Println("---")
+
+			time.Sleep(time.Second * 6)
+		}
+	}()
 
 	// wait for a SIGINT or SIGTERM signal
 	ch := make(chan os.Signal, 1)
