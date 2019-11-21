@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"github.com/ipfs/go-cid"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p-core/crypto"
 	"github.com/libp2p/go-libp2p-core/host"
@@ -17,6 +18,7 @@ import (
 	"github.com/libp2p/go-libp2p-secio"
 	yamux "github.com/libp2p/go-libp2p-yamux"
 	"github.com/multiformats/go-multiaddr"
+	"github.com/multiformats/go-multihash"
 	"io/ioutil"
 	"log"
 	"os"
@@ -298,7 +300,7 @@ func Init(port, bootstrapText string) {
 	if e != nil {
 		log.Fatalln(e)
 	}
-	log.Println("节点:", p2pAddrs[0])
+	log.Println("节点:", p2pAddrs)
 
 	node.SetStreamHandler(PROTOCOL_ID, handleStream)
 
@@ -313,6 +315,20 @@ func Init(port, bootstrapText string) {
 		for _, v := range peerIpfsMap {
 			sayHi(v)
 		}
+	}
+
+	//CID前缀
+	prefix := cid.Prefix{
+		Version:  1,
+		Codec:    cid.Raw,
+		MhType:   multihash.SHA2_256,
+		MhLength: -1,
+	}
+	c, e := prefix.Sum([]byte("你好"))
+	if e != nil {
+		log.Println(e)
+	} else {
+		log.Println(c)
 	}
 
 	//显示DHT节点
