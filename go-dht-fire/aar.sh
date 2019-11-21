@@ -14,4 +14,7 @@ go mod vendor; cp -r vendor/* $GOPATH/src/; rm -rf $GOPATH/src/pkg $GOPATH/src/m
 
 # 打包(仅arm64)
 GO111MODULE="off"
-gomobile bind -v -o mp2p.aar -target=android/arm64 $PROJECT
+gomobile bind -v -o mp2p.aar -target=android/arm64 $PROJECT/mp2p
+rm -rf $PROJECT
+
+echo "打包完成"
