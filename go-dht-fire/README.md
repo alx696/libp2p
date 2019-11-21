@@ -2,6 +2,16 @@
 
 本身不提供任何功能，只用于发现节点。
 
+## 开发
+
+### 编译Android aar包
+
+编译aar方法见[文档](https://github.com/alx696/share/wiki/Go-mobile-(Android)#%E5%AE%89%E8%A3%85%E5%92%8C%E5%88%9D%E5%A7%8B)
+
+注意:
+* gomobile不支持module, 文档中已有提到
+* Android 9需要申请写外部存储权限才能写文件(之前无需申请)
+
 ## 用法
 
 ### 启动启发节点A
