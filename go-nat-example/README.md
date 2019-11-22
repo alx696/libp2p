@@ -10,4 +10,4 @@
 
 ## 启动参数
 
-**type** 不设置时使用`go-nat.DiscoverNATs(ctx)`, 设为`libp2p`时使用`go-libp2p-nat.DiscoverNAT(ctx)`, 设为`gateway`时使用`go-nat.DiscoverGateway()`.
+**type** 不设置时使用`go-nat.DiscoverNATs(ctx)`, 设为`gateway`时使用`go-nat.DiscoverGateway()`, 设为`libp2p`时使用`go-libp2p-nat.DiscoverNAT(ctx)`.

@@ -9,6 +9,32 @@ import (
 	"time"
 )
 
+func debugNat(natGateway gonat.NAT, port int) {
+	log.Println("NAT网关类型:", natGateway.Type())
+
+	natDeviceAddress, e := natGateway.GetDeviceAddress()
+	if e != nil {
+		log.Fatalln(e)
+	}
+	log.Println("NAT网关IP:", natDeviceAddress.String())
+
+	natExternalAddress, e := natGateway.GetExternalAddress()
+	if e != nil {
+		log.Fatalln(e)
+	}
+	log.Println("NAT网关公网IP:", natExternalAddress.String())
+
+	//进行端口映射
+	mappedExternalPort, e := natGateway.AddPortMapping("udp", port, "P2P测试", time.Minute)
+	if e != nil {
+		log.Fatalln(e)
+	}
+	log.Println("NAT映射端口:", port, mappedExternalPort)
+
+	//移除端口映射
+	_ = natGateway.DeletePortMapping("udp", port)
+}
+
 // 目前有go-nat和go-libp2p-nat两个库可用,
 // go-nat.DiscoverNATs(ctx)的网络环境适应性较好.
 func main() {
@@ -47,50 +73,23 @@ func main() {
 		_ = natMapping.Close()
 	} else {
 		//go-nat库
-		log.Println("使用go-nat")
-
 		if *natType == "gateway" {
+			log.Println("使用go-nat DiscoverGateway()")
 			//H3C路由需要2分钟以上, 家里的路由5秒.
 			natGateway, e := gonat.DiscoverGateway()
 			if e != nil {
 				log.Fatalln(e)
 			}
-			natExternalAddress, e := natGateway.GetExternalAddress()
-			if e != nil {
-				log.Fatalln(e)
-			}
-			log.Println("NAT网关公网IP:", natExternalAddress.String())
-
-			//进行端口映射
-			mappedExternalPort, e := natGateway.AddPortMapping("udp", port, "P2P测试", time.Minute)
-			if e != nil {
-				log.Fatalln(e)
-			}
-			log.Println("NAT映射端口:", port, mappedExternalPort)
-
-			//移除端口映射
-			_ = natGateway.DeletePortMapping("udp", port)
+			log.Println("找到NAT网关")
+			debugNat(natGateway, port)
 		} else {
+			log.Println("使用go-nat DiscoverNATs(ctx)")
 			//企业路由器2秒, 家里路由器马上
 			natChan := gonat.DiscoverNATs(ctx)
 			select {
 			case natGateway := <-natChan:
-				//获取公网IP
-				natExternalAddress, e := natGateway.GetExternalAddress()
-				if e != nil {
-					log.Fatalln(e)
-				}
-				log.Println("NAT网关公网IP:", natExternalAddress.String())
-
-				//进行端口映射
-				mappedExternalPort, e := natGateway.AddPortMapping("udp", port, "P2P测试", time.Minute)
-				if e != nil {
-					log.Fatalln(e)
-				}
-				log.Println("NAT映射端口:", port, mappedExternalPort)
-
-				//移除端口映射
-				_ = natGateway.DeletePortMapping("udp", port)
+				log.Println("找到NAT网关")
+				debugNat(natGateway, port)
 			}
 		}
 	}
