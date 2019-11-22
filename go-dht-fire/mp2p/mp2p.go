@@ -13,10 +13,7 @@ import (
 	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/libp2p/go-libp2p-core/routing"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
-	mplex "github.com/libp2p/go-libp2p-mplex"
 	libp2pquic "github.com/libp2p/go-libp2p-quic-transport"
-	"github.com/libp2p/go-libp2p-secio"
-	yamux "github.com/libp2p/go-libp2p-yamux"
 	gonat "github.com/libp2p/go-nat"
 	"github.com/multiformats/go-multiaddr"
 	"github.com/multiformats/go-multihash"
@@ -316,18 +313,13 @@ func Init(port, bootstrapAddr string) {
 	//创建节点
 	node, e = libp2p.New(
 		ctx,
-		libp2p.Identity(prKey),               //保持私玥(节点ID)
-		libp2p.Transport(quicTransport),      //使用QUIC传输
-		libp2p.Security(secio.ID, secio.New), //使用secio加密
+		libp2p.Identity(prKey),          //保持节点ID
+		libp2p.Transport(quicTransport), //使用QUIC传输
 		libp2p.ListenAddrStrings(
 			strings.Join([]string{"/ip4/0.0.0.0/udp/", port, "/quic"}, ""), //监听IPv4
 			strings.Join([]string{"/ip6/::/udp/", port, "/quic"}, ""),      //监听IPv6
 		),
 		libp2p.Routing(newDHT), //路由DHT
-		libp2p.ChainOptions(
-			libp2p.Muxer("/yamux/1.0.0", yamux.DefaultTransport),
-			libp2p.Muxer("/mplex/6.7.0", mplex.DefaultTransport),
-		), //多路复用
 	)
 	if e != nil {
 		log.Fatalln(e)
