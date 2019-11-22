@@ -45,6 +45,8 @@ func enableNAT(internalPort int) (net.IP, int, error) {
 	natChan := gonat.DiscoverNATs(ctx)
 	select {
 	case natGateway = <-natChan:
+		log.Println("NAT网关类型:", natGateway.Type())
+
 		//获取公网IP
 		netIp, e := natGateway.GetExternalAddress()
 		if e != nil {
@@ -53,7 +55,7 @@ func enableNAT(internalPort int) (net.IP, int, error) {
 		log.Println("NAT公网IP:", netIp.String())
 
 		//映射端口
-		externalPort, e := natGateway.AddPortMapping("udp", internalPort, "mp2p", time.Minute)
+		externalPort, e := natGateway.AddPortMapping("udp", internalPort, "mp2p", time.Second*3)
 		if e != nil {
 			return net.IP{}, 0, e
 		}
@@ -183,33 +185,15 @@ func handleStream(stream network.Stream) {
 	}
 }
 
-// 更新节点
-func updatePeer(jsonText string) {
-	var maTextArray []string
-	e := json.Unmarshal([]byte(jsonText), &maTextArray)
-	if e != nil {
-		log.Println(e)
-		return
-	}
-
-	for _, v := range maTextArray {
-		addrInfo, e := textToAddrInfo(v)
-		if e != nil {
-			log.Println(e)
-			continue
-		}
-		peerIpfsMap[addrInfo.ID.String()] = v
-	}
-}
-
 // 引导
 func bootstrap(addrText, natAddr string) error {
+	//转换地址
 	ai, e := textToAddrInfo(addrText)
 	if e != nil {
 		return e
 	}
 
-	//连接
+	//连接节点
 	e = node.Connect(ctx, *ai)
 	if e != nil {
 		return e
@@ -231,14 +215,36 @@ func bootstrap(addrText, natAddr string) error {
 		return e
 	}
 	txt = strings.Replace(txt, "\n", "", -1)
-	log.Println("拿到引导数据:", txt)
+	log.Println("获取引导数据:", txt)
 	e = s.Reset()
 	if e != nil {
 		return e
 	}
 
-	//更新节点
-	updatePeer(txt)
+	//解析引导数据
+	var addrTextArray []string
+	e = json.Unmarshal([]byte(txt), &addrTextArray)
+	if e != nil {
+		return e
+	}
+	for _, v := range addrTextArray {
+		addrInfo, e := textToAddrInfo(v)
+		if e != nil {
+			log.Println(e)
+			continue
+		}
+
+		//连接引导节点, 出发DHT路由刷新
+		e = node.Connect(ctx, *addrInfo)
+		if e != nil {
+			log.Println(e)
+			continue
+		}
+		log.Println("已经连接节点:", v)
+
+		//缓存引导节点
+		peerIpfsMap[addrInfo.ID.String()] = v
+	}
 
 	return nil
 }
@@ -352,14 +358,9 @@ func Init(port, bootstrapAddr string) {
 
 	//如果设置了引导节点则连接
 	if bootstrapAddr != "" {
-		e := bootstrap(bootstrapAddr, natAddr)
+		e = bootstrap(bootstrapAddr, natAddr)
 		if e != nil {
 			log.Println(e)
-		}
-
-		//进行一次连接和通信, 触发DHT列表刷新
-		for _, v := range peerIpfsMap {
-			sayHi(v)
 		}
 	}
 
@@ -383,7 +384,10 @@ func Init(port, bootstrapAddr string) {
 			kadDHT.RefreshRoutingTable()
 
 			for _, peerId := range kadDHT.RoutingTable().ListPeers() {
-				log.Println("DHT节点:", peerId)
+				//log.Println("DHT节点:", peerId)
+
+				addrInfo := kadDHT.FindLocal(peerId)
+				log.Println("DHT地址:", addrInfo)
 			}
 			log.Println("---")
 
