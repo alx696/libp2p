@@ -80,7 +80,7 @@ func main() {
 			if e != nil {
 				log.Fatalln(e)
 			}
-			log.Println("找到NAT网关")
+			log.Println("找到NAT网关:", natGateway)
 			debugNat(natGateway, port)
 		} else {
 			log.Println("使用go-nat DiscoverNATs(ctx)")
@@ -88,7 +88,12 @@ func main() {
 			natChan := gonat.DiscoverNATs(ctx)
 			select {
 			case natGateway := <-natChan:
-				log.Println("找到NAT网关")
+				if natGateway == nil {
+					log.Println("没有找到网关")
+					return
+				}
+
+				log.Println("找到NAT网关:", natGateway)
 				debugNat(natGateway, port)
 			}
 		}
