@@ -16,11 +16,14 @@ import (
 	libp2pquic "github.com/libp2p/go-libp2p-quic-transport"
 	"github.com/libp2p/go-libp2p-secio"
 	yamux "github.com/libp2p/go-libp2p-yamux"
+	gonat "github.com/libp2p/go-nat"
 	"github.com/multiformats/go-multiaddr"
 	"io/ioutil"
 	"log"
+	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -31,11 +34,37 @@ const (
 	PROTOCOL_ID = "/p2p/dht"
 )
 
+var natGateway gonat.NAT
 var m sync.RWMutex
 var ctx context.Context
 var kadDHT *dht.IpfsDHT
 var node host.Host
 var peerIpfsMap = make(map[string]string)
+
+func enableNAT(internalPort int) (net.IP, int, error) {
+	natChan := gonat.DiscoverNATs(ctx)
+	select {
+	case natGateway = <-natChan:
+		//获取公网IP
+		netIp, e := natGateway.GetExternalAddress()
+		if e != nil {
+			return net.IP{}, 0, e
+		}
+		log.Println("NAT公网IP:", netIp.String())
+
+		//映射端口
+		externalPort, e := natGateway.AddPortMapping("udp", internalPort, "mp2p", time.Minute)
+		if e != nil {
+			return net.IP{}, 0, e
+		}
+		log.Println("NAT内部端口:", internalPort, "映射外部端口:", externalPort)
+
+		return netIp, externalPort, nil
+
+		////移除端口映射
+		//_ = natGateway.DeletePortMapping("udp", internalPort)
+	}
+}
 
 // 生成或读取密钥
 // 注意: Android可用"/sdcard/rsa"定位到存储中rsa文件夹, 但记得在应用权限中申请写外部存储权限.
@@ -254,6 +283,16 @@ func sayHi(maText string) {
 func Init(port, bootstrapText string) {
 	log.Println("启动P2P节点:", port, bootstrapText)
 
+	//NAT穿越
+	portInt, e := strconv.Atoi(port)
+	if e != nil {
+		log.Fatalln(e)
+	}
+	natIp, natPort, e := enableNAT(portInt)
+	if e != nil {
+		log.Fatalln(e)
+	}
+
 	//生成密钥
 	prKey, _ := rsaKey("./config/rsa")
 
@@ -280,8 +319,9 @@ func Init(port, bootstrapText string) {
 		libp2p.Transport(quicTransport),      //使用QUIC传输
 		libp2p.Security(secio.ID, secio.New), //使用secio加密
 		libp2p.ListenAddrStrings(
-			strings.Join([]string{"/ip4/0.0.0.0/udp/", port, "/quic"}, ""), //监听IPv4
-			strings.Join([]string{"/ip6/::/udp/", port, "/quic"}, ""),      //监听IPv6
+			strings.Join([]string{"/ip4/0.0.0.0/udp/", port, "/quic"}, ""),                               //监听IPv4
+			strings.Join([]string{"/ip4/", natIp.String(), "/udp/", strconv.Itoa(natPort), "/quic"}, ""), //监听公网IPv4
+			strings.Join([]string{"/ip6/::/udp/", port, "/quic"}, ""),                                    //监听IPv6
 		),
 		libp2p.Routing(newDHT), //路由DHT
 		libp2p.ChainOptions(
@@ -298,7 +338,7 @@ func Init(port, bootstrapText string) {
 	if e != nil {
 		log.Fatalln(e)
 	}
-	log.Println("节点:", p2pAddrs[0])
+	log.Println("节点:", p2pAddrs)
 
 	node.SetStreamHandler(PROTOCOL_ID, handleStream)
 
