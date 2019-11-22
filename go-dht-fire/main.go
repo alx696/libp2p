@@ -2,7 +2,7 @@ package main
 
 import (
 	"flag"
-	"github.com/alx696/go-dht-fire/mp2p"
+	"github.com/alx696/libp2p/go-dht-fire/mp2p"
 	"log"
 )
 

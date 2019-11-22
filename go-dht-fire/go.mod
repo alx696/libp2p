@@ -1,4 +1,4 @@
-module github.com/alx696/go-dht-fire
+module github.com/alx696/libp2p/go-dht-fire
 
 go 1.13
 

@@ -33,7 +33,8 @@ import (
 )
 
 const (
-	PROTOCOL_ID = "/p2p/dht"
+	PROTOCOL_BOOTSTRAP = "/mp2p/bootstrap"
+	PROTOCOL_HI        = "/mp2p/hi"
 )
 
 var natGateway gonat.NAT
@@ -123,7 +124,7 @@ func textToAddrInfo(text string) (*peer.AddrInfo, error) {
 func handleStream(stream network.Stream) {
 	streamPeerId := stream.Conn().RemotePeer().String()
 	streamPeerMa := stream.Conn().RemoteMultiaddr().String()
-	log.Println("流处:", streamPeerId, streamPeerMa)
+	log.Println("流处:", stream.Protocol(), streamPeerId, streamPeerMa)
 
 	//读取内容
 	reader := bufio.NewReader(stream)
@@ -135,12 +136,16 @@ func handleStream(stream network.Stream) {
 	txt = strings.Replace(txt, "\n", "", -1)
 	log.Println(txt)
 
-	switch txt {
+	switch stream.Protocol() {
 
-	case "引导":
+	case PROTOCOL_BOOTSTRAP:
 		//缓存连接节点地址
 		m.Lock()
-		peerIpfsMap[streamPeerId] = strings.Join([]string{streamPeerMa, "/ipfs/", streamPeerId}, "")
+		if txt != "" {
+			peerIpfsMap[streamPeerId] = txt
+		} else {
+			peerIpfsMap[streamPeerId] = strings.Join([]string{streamPeerMa, "/ipfs/", streamPeerId}, "")
+		}
 		m.Unlock()
 
 		//获取现有节点地址
@@ -171,7 +176,7 @@ func handleStream(stream network.Stream) {
 			return
 		}
 
-	case "你好":
+	case PROTOCOL_HI:
 		_, e = stream.Write([]byte("Fine!\n"))
 		if e != nil {
 			log.Println(e)
@@ -201,8 +206,8 @@ func updatePeer(jsonText string) {
 }
 
 // 引导
-func bootstrap(maText string) error {
-	ai, e := textToAddrInfo(maText)
+func bootstrap(addrText, natAddr string) error {
+	ai, e := textToAddrInfo(addrText)
 	if e != nil {
 		return e
 	}
@@ -212,14 +217,14 @@ func bootstrap(maText string) error {
 	if e != nil {
 		return e
 	}
-	log.Println("已经连接启发节点:", maText)
+	log.Println("已经连接启发节点:", addrText)
 
 	//获取引导数据
-	s, e := node.NewStream(ctx, ai.ID, PROTOCOL_ID)
+	s, e := node.NewStream(ctx, ai.ID, PROTOCOL_BOOTSTRAP)
 	if e != nil {
 		return e
 	}
-	_, e = s.Write([]byte("引导\n"))
+	_, e = s.Write([]byte(strings.Join([]string{natAddr, "\n"}, "")))
 	if e != nil {
 		return e
 	}
@@ -256,7 +261,7 @@ func sayHi(maText string) {
 	}
 	log.Println("已经连接启发节点:", maText)
 
-	s, e := node.NewStream(ctx, ai.ID, PROTOCOL_ID)
+	s, e := node.NewStream(ctx, ai.ID, PROTOCOL_HI)
 	if e != nil {
 		log.Println(e)
 		return
@@ -282,17 +287,11 @@ func sayHi(maText string) {
 }
 
 // 参考 https://github.com/libp2p/go-libp2p-examples/blob/b7ac9e91865656b3ec13d18987a09779adad49dc/ipfs-camp-2019/06-Pubsub/main.go
-func Init(port, bootstrapText string) {
-	log.Println("启动P2P节点:", port, bootstrapText)
+func Init(port, bootstrapAddr string) {
+	log.Println("启动P2P节点:", port, bootstrapAddr)
 
-	//NAT穿越
-	portInt, e := strconv.Atoi(port)
-	if e != nil {
-		log.Fatalln(e)
-	}
-	natIp, natPort, e := enableNAT(portInt)
-	if e != nil {
-		log.Fatalln(e)
+	if port == "0" {
+		log.Fatalln("必须明确端口")
 	}
 
 	//生成密钥
@@ -321,9 +320,8 @@ func Init(port, bootstrapText string) {
 		libp2p.Transport(quicTransport),      //使用QUIC传输
 		libp2p.Security(secio.ID, secio.New), //使用secio加密
 		libp2p.ListenAddrStrings(
-			strings.Join([]string{"/ip4/0.0.0.0/udp/", port, "/quic"}, ""),                               //监听IPv4
-			strings.Join([]string{"/ip4/", natIp.String(), "/udp/", strconv.Itoa(natPort), "/quic"}, ""), //监听公网IPv4
-			strings.Join([]string{"/ip6/::/udp/", port, "/quic"}, ""),                                    //监听IPv6
+			strings.Join([]string{"/ip4/0.0.0.0/udp/", port, "/quic"}, ""), //监听IPv4
+			strings.Join([]string{"/ip6/::/udp/", port, "/quic"}, ""),      //监听IPv6
 		),
 		libp2p.Routing(newDHT), //路由DHT
 		libp2p.ChainOptions(
@@ -342,11 +340,27 @@ func Init(port, bootstrapText string) {
 	}
 	log.Println("节点:", p2pAddrs)
 
-	node.SetStreamHandler(PROTOCOL_ID, handleStream)
+	node.SetStreamHandler(PROTOCOL_BOOTSTRAP, handleStream)
+	node.SetStreamHandler(PROTOCOL_HI, handleStream)
+
+	//NAT穿越
+	natAddr := ""
+	internalPort, e := strconv.Atoi(port)
+	if e != nil {
+		log.Println(e)
+	} else {
+		natIp, natPort, e := enableNAT(internalPort)
+		if e != nil {
+			log.Println(e)
+		} else {
+			natAddr = strings.Join([]string{"/ip4/", natIp.String(), "/udp/", strconv.Itoa(natPort), "/quic/ipfs/", node.ID().String()}, "")
+		}
+	}
+	log.Println("节点NAT:", natAddr)
 
 	//如果设置了引导节点则连接
-	if bootstrapText != "" {
-		e := bootstrap(bootstrapText)
+	if bootstrapAddr != "" {
+		e := bootstrap(bootstrapAddr, natAddr)
 		if e != nil {
 			log.Println(e)
 		}
