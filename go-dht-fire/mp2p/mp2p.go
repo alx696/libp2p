@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	PROTOCOL_BOOTSTRAP = "/mp2p/bootstrap"
+	PROTOCOL_BOOTSTRAP = "/p2p/bootstrap"
 )
 
 var ctx context.Context
@@ -35,6 +35,7 @@ var kadDHT *dht.IpfsDHT
 var node host.Host
 var sm sync.RWMutex
 var peerMap = make(map[string]string)
+var natGateway gonat.NAT
 
 // 生成或读取密钥
 // 注意: Android可用"/sdcard/rsa"定位到存储中rsa文件夹, 但记得在应用权限中申请写外部存储权限.
@@ -103,12 +104,13 @@ func handleBootstrapStream(s network.Stream) {
 	peerMa := s.Conn().RemoteMultiaddr().String()
 	log.Println("流处:", peerId, peerMa)
 
+	//读取流
 	text, e := readTextFormStream(s)
 	if e != nil {
 		log.Println(e)
 		return
 	}
-	log.Println("收到数据:", text)
+	log.Println("流处收到数据:", text)
 
 	//缓存连接节点地址
 	sm.Lock()
@@ -151,7 +153,36 @@ func handleBootstrapStream(s network.Stream) {
 }
 
 // 引导
-func bootstrap(natAddr, addrText string) error {
+func bootstrap(internalPort int, addrText string) error {
+	//NAT穿越
+	natAddr := ""
+	natChan := gonat.DiscoverNATs(ctx)
+	select {
+	case natGateway = <-natChan:
+		if natGateway == nil {
+			log.Println("没有找到NAT网关!")
+			break
+		}
+		log.Println("NAT网关类型:", natGateway.Type())
+
+		//获取公网IP
+		netIp, e := natGateway.GetExternalAddress()
+		if e != nil {
+			log.Fatalln(e)
+		}
+		log.Println("NAT公网IP:", netIp.String())
+
+		log.Println("内部端口:", internalPort)
+		//映射端口
+		externalPort, e := natGateway.AddPortMapping("udp", internalPort, "mp2p", time.Second*3)
+		if e != nil {
+			log.Fatalln(e)
+		}
+		log.Println("NAT内部端口:", internalPort, "映射外部端口:", externalPort)
+		natAddr = strings.Join([]string{"/ip4/", netIp.String(), "/udp/", strconv.Itoa(externalPort), "/quic/ipfs/", node.ID().String()}, "")
+	}
+	log.Println("节点NAT地址:", natAddr)
+
 	//转换地址
 	ai, e := textToAddrInfo(addrText)
 	if e != nil {
@@ -163,14 +194,14 @@ func bootstrap(natAddr, addrText string) error {
 	if e != nil {
 		return e
 	}
-	log.Println("已连启发节点:", addrText)
+	log.Println("已连启发节点")
 
 	//请给节点
 	s, e := node.NewStream(ctx, ai.ID, PROTOCOL_BOOTSTRAP)
 	if e != nil {
 		return e
 	}
-	_, e = s.Write([]byte(strings.Join([]string{natAddr, "/n"}, "")))
+	_, e = s.Write([]byte(strings.Join([]string{natAddr, "\n"}, "")))
 	if e != nil {
 		return e
 	}
@@ -178,7 +209,7 @@ func bootstrap(natAddr, addrText string) error {
 	if e != nil {
 		return e
 	}
-	log.Println("启发数据:", text)
+	log.Println("启发收到数据:", text)
 	e = s.Reset()
 	if e != nil {
 		return e
@@ -190,6 +221,7 @@ func bootstrap(natAddr, addrText string) error {
 	if e != nil {
 		return e
 	}
+	sm.Lock()
 	for _, v := range maArray {
 		addrInfo, e := textToAddrInfo(v)
 		if e != nil {
@@ -208,6 +240,7 @@ func bootstrap(natAddr, addrText string) error {
 		//缓存节点
 		peerMap[addrInfo.ID.String()] = v
 	}
+	sm.Unlock()
 
 	return nil
 }
@@ -215,6 +248,11 @@ func bootstrap(natAddr, addrText string) error {
 // 参考 https://github.com/libp2p/go-libp2p-examples/blob/b7ac9e91865656b3ec13d18987a09779adad49dc/ipfs-camp-2019/06-Pubsub/main.go
 func Init(port, bootstrapAddr string) {
 	log.Println("启动节点:", port, bootstrapAddr)
+
+	internalPort, e := strconv.Atoi(port)
+	if e != nil {
+		log.Fatalln(e)
+	}
 
 	//生成密钥
 	prKey, _ := rsaKey("./config/rsa")
@@ -257,43 +295,12 @@ func Init(port, bootstrapAddr string) {
 	}
 	log.Println("节点地址:", p2pAddrs)
 
-	//NAT穿越
-	natAddr := ""
-	internalPort, e := strconv.Atoi(port)
-	if e != nil {
-		log.Fatalln(e)
-	}
-	natChan := gonat.DiscoverNATs(ctx)
-	select {
-	case natGateway := <-natChan:
-		log.Println("NAT网关类型:", natGateway.Type())
-
-		//获取公网IP
-		netIp, e := natGateway.GetExternalAddress()
-		if e != nil {
-			log.Fatalln(e)
-		}
-		log.Println("NAT公网IP:", netIp.String())
-
-		//映射端口
-		externalPort, e := natGateway.AddPortMapping("udp", internalPort, "mp2p", time.Second*3)
-		if e != nil {
-			log.Fatalln(e)
-		}
-		log.Println("NAT内部端口:", internalPort, "映射外部端口:", externalPort)
-		natAddr = strings.Join([]string{"/ip4/", netIp.String(), "/udp/", strconv.Itoa(externalPort), "/quic/ipfs/", node.ID().String()}, "")
-
-		////移除端口映射
-		//_ = natGateway.DeletePortMapping("udp", internalPort)
-	}
-	log.Println("节点NAT地址:", natAddr)
-
 	//设置引导流处
 	node.SetStreamHandler(PROTOCOL_BOOTSTRAP, handleBootstrapStream)
 
 	//如果设置了引导节点则连接
 	if bootstrapAddr != "" {
-		e = bootstrap(natAddr, bootstrapAddr)
+		e = bootstrap(internalPort, bootstrapAddr)
 		if e != nil {
 			log.Println(e)
 		}
@@ -303,31 +310,35 @@ func Init(port, bootstrapAddr string) {
 	go func() {
 		for {
 			kadDHT.RefreshRoutingTable()
-			var idMap = make(map[string]int)
 
-			sm.Lock()
 			for _, peerId := range kadDHT.RoutingTable().ListPeers() {
-				idMap[peerId.String()] = 0
-
-				_, exists := peerMap[peerId.String()]
-				if exists {
-					continue
-				}
-
-				log.Println("发现节点:", peerId.String())
-				peerMap[peerId.String()] = ""
+				log.Println("DHT节点:", peerId.String())
 			}
-			for k, _ := range peerMap {
-				_, exists := idMap[k]
-				if exists {
-					continue
-				}
 
-				log.Println("失去节点:", k)
-				delete(peerMap, k)
-			}
-			log.Println("DHT节点数量:", len(peerMap))
-			sm.Unlock()
+			//var idMap = make(map[string]int)
+			//sm.Lock()
+			//for _, peerId := range kadDHT.RoutingTable().ListPeers() {
+			//	idMap[peerId.String()] = 0
+			//
+			//	_, exists := peerMap[peerId.String()]
+			//	if exists {
+			//		continue
+			//	}
+			//
+			//	log.Println("发现节点:", peerId.String())
+			//	peerMap[peerId.String()] = ""
+			//}
+			//for k, _ := range peerMap {
+			//	_, exists := idMap[k]
+			//	if exists {
+			//		continue
+			//	}
+			//
+			//	log.Println("失去节点:", k)
+			//	delete(peerMap, k)
+			//}
+			//log.Println("DHT节点数量:", len(peerMap))
+			//sm.Unlock()
 
 			time.Sleep(time.Second * 6)
 		}
@@ -338,6 +349,11 @@ func Init(port, bootstrapAddr string) {
 	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
 	<-ch
 	log.Println("收到信号, 关闭...")
+
+	//移除端口映射
+	if natGateway != nil {
+		_ = natGateway.DeletePortMapping("udp", internalPort)
+	}
 
 	_ = node.Close()
 }
