@@ -19,7 +19,7 @@ P2P网络的形成需要经过以下步骤:
 
 ### DHT
 
-示例 [go-dht-example]
+示例 [go-dht-fire]
 
 ## 传输
 
