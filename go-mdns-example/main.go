@@ -4,9 +4,7 @@ import (
 	"context"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p-core/peer"
-	"github.com/libp2p/go-libp2p/p2p/discovery"
 	"log"
-	"time"
 )
 
 // mDNS接待的结构
@@ -31,21 +29,23 @@ func main() {
 	if e != nil {
 		log.Fatalln(e)
 	}
+	log.Println(node.ID().String())
 
 	//创建mDNS
 	//interval最小时间小于5秒时强制变成5秒
-	mdnsService, e := discovery.NewMdnsService(ctx, node, time.Second, "p2p-mdns")
-	if e != nil {
-		log.Fatalln(e)
-	}
-	//监听mDNS
-	mdnsNotifee := &mDnsNotifee{}
-	mdnsNotifee.PeerChan = make(chan peer.AddrInfo)
-	mdnsService.RegisterNotifee(mdnsNotifee)
-	for {
-		select {
-		case p := <-mdnsNotifee.PeerChan:
-			log.Println("发现节点:", p)
-		}
-	}
+	//mdnsService, e := discovery.NewMdnsService(ctx, node, time.Second*6, "p2p-mdns")
+	//if e != nil {
+	//	log.Fatalln(e)
+	//}
+	//log.Println(mdnsService.Close())
+	////监听mDNS
+	//mdnsNotifee := &mDnsNotifee{}
+	//mdnsNotifee.PeerChan = make(chan peer.AddrInfo)
+	//mdnsService.RegisterNotifee(mdnsNotifee)
+	//for {
+	//	select {
+	//	case p := <-mdnsNotifee.PeerChan:
+	//		log.Println("发现节点:", p)
+	//	}
+	//}
 }

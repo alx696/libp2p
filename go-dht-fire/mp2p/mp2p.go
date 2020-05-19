@@ -6,6 +6,8 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"github.com/libp2p/go-libp2p"
+	autonat "github.com/libp2p/go-libp2p-autonat-svc"
+	connmgr "github.com/libp2p/go-libp2p-connmgr"
 	"github.com/libp2p/go-libp2p-core/crypto"
 	"github.com/libp2p/go-libp2p-core/host"
 	"github.com/libp2p/go-libp2p-core/network"
@@ -13,6 +15,8 @@ import (
 	"github.com/libp2p/go-libp2p-core/routing"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	libp2pquic "github.com/libp2p/go-libp2p-quic-transport"
+	secio "github.com/libp2p/go-libp2p-secio"
+	libp2ptls "github.com/libp2p/go-libp2p-tls"
 	gonat "github.com/libp2p/go-nat"
 	"github.com/multiformats/go-multiaddr"
 	"io/ioutil"
@@ -31,7 +35,7 @@ const (
 )
 
 var ctx context.Context
-var kadDHT *dht.IpfsDHT
+var mDHT *dht.IpfsDHT
 var node host.Host
 var sm sync.RWMutex
 var peerMap = make(map[string]string)
@@ -54,7 +58,7 @@ func rsaKey(dir string) (prKey crypto.PrivKey, puKey crypto.PubKey) {
 
 		//生成密钥
 		rr := rand.Reader
-		prKey, puKey, _ = crypto.GenerateKeyPairWithReader(crypto.RSA, 2048, rr)
+		prKey, puKey, _ = crypto.GenerateKeyPairWithReader(crypto.Ed25519, -1, rr)
 
 		//存储密钥
 		privateKeyBytes, _ := crypto.MarshalPrivateKey(prKey)
@@ -245,7 +249,7 @@ func bootstrap(internalPort int, addrText string) error {
 	return nil
 }
 
-// 参考 https://github.com/libp2p/go-libp2p-examples/blob/b7ac9e91865656b3ec13d18987a09779adad49dc/ipfs-camp-2019/06-Pubsub/main.go
+// 参考 https://github.com/libp2p/go-libp2p-examples/blob/master/libp2p-host/host.go
 func Init(port, bootstrapAddr string) {
 	log.Println("启动节点:", port, bootstrapAddr)
 
@@ -257,36 +261,62 @@ func Init(port, bootstrapAddr string) {
 	//生成密钥
 	prKey, _ := rsaKey("./config/rsa")
 
-	//创建传输层
-	quicTransport, e := libp2pquic.NewTransport(prKey)
-	if e != nil {
-		log.Fatalln(e)
-	}
-
-	//创建上下文
-	ctx = context.Background()
-
-	//DHT定义
-	newDHT := func(h host.Host) (routing.PeerRouting, error) {
-		var err error
-		kadDHT, err = dht.New(ctx, h)
-		return kadDHT, err
-	}
+	// The context governs the lifetime of the libp2p node.
+	// Cancelling it will stop the the host.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	//创建节点
 	node, e = libp2p.New(
 		ctx,
-		libp2p.Identity(prKey),          //保持节点ID
-		libp2p.Transport(quicTransport), //使用QUIC传输
+		libp2p.Identity(prKey), //保持节点ID
 		libp2p.ListenAddrStrings(
+			strings.Join([]string{"/ip4/0.0.0.0/tcp/", port}, ""),          //监听IPv4
 			strings.Join([]string{"/ip4/0.0.0.0/udp/", port, "/quic"}, ""), //监听IPv4
-			strings.Join([]string{"/ip6/::/udp/", port, "/quic"}, ""),      //监听IPv6
+			//strings.Join([]string{"/ip6/::/udp/", port, "/quic"}, ""),      //监听IPv6
 		),
-		libp2p.Routing(newDHT), //路由DHT
+		// support TLS connections
+		libp2p.Security(libp2ptls.ID, libp2ptls.New),
+		// support secio connections
+		libp2p.Security(secio.ID, secio.New),
+		// support QUIC
+		libp2p.Transport(libp2pquic.NewTransport),
+		// support any other default transports (TCP)
+		libp2p.DefaultTransports,
+		// Let's prevent our peer from having too many
+		// connections by attaching a connection manager.
+		libp2p.ConnectionManager(connmgr.NewConnManager(
+			100,         // Lowwater
+			300,         // HighWater,
+			time.Minute, // GracePeriod
+		)),
+		// Attempt to open ports using uPNP for NATed hosts.
+		libp2p.NATPortMap(),
+		// Let this host use the DHT to find other hosts
+		libp2p.Routing(func(h host.Host) (routing.PeerRouting, error) {
+			mDHT, e = dht.New(ctx, h)
+			return mDHT, e
+		}),
+		// Let this host use relays and advertise itself on relays if
+		// it finds it is behind NAT. Use libp2p.Relay(options...) to
+		// enable active relays and more.
+		libp2p.EnableAutoRelay(),
 	)
 	if e != nil {
 		log.Fatalln(e)
 	}
+
+	// If you want to help other peers to figure out if they are behind
+	// NATs, you can launch the server-side of AutoNAT too (AutoRelay
+	// already runs the client)
+	_, e = autonat.NewAutoNATService(ctx, node,
+		// Support same non default security and transport options as
+		// original host.
+		libp2p.Security(libp2ptls.ID, libp2ptls.New),
+		libp2p.Security(secio.ID, secio.New),
+		libp2p.Transport(libp2pquic.NewTransport),
+		libp2p.DefaultTransports,
+	)
 
 	//节点地址转为P2P地址
 	p2pAddrs, e := peer.AddrInfoToP2pAddrs(&peer.AddrInfo{node.ID(), node.Addrs()})
@@ -309,9 +339,9 @@ func Init(port, bootstrapAddr string) {
 	//显示DHT节点
 	go func() {
 		for {
-			kadDHT.RefreshRoutingTable()
+			mDHT.RefreshRoutingTable()
 
-			for _, peerId := range kadDHT.RoutingTable().ListPeers() {
+			for _, peerId := range mDHT.RoutingTable().ListPeers() {
 				log.Println("DHT节点:", peerId.String())
 			}
 
