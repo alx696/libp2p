@@ -3,6 +3,7 @@ package im
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"github.com/libp2p/go-libp2p"
 	host2 "github.com/libp2p/go-libp2p-core/host"
 	"github.com/libp2p/go-libp2p-core/network"
@@ -57,13 +58,35 @@ func handleStream(s network.Stream) {
 	log.Println("处理新流")
 
 	rw := bufio.NewReadWriter(bufio.NewReader(s), bufio.NewWriter(s))
-	// 持续读取
-	go readData(rw)
-	// 持续回复
-	go writeData(rw)
+
+	// 读取
+	str, err := rw.ReadString('\n')
+	str = strings.Replace(str, "\n", "", -1)
+	if err != nil {
+		log.Println("读取字符出错:", err)
+		return
+	}
+	log.Println("读取字符:", str)
+
+	// 回复2次
+	for i := 0; i < 2; i++ {
+		_, err := rw.Write([]byte(fmt.Sprint(time.Now().String(), "\n")))
+		if err != nil {
+			log.Println("回复失败:", err)
+			return
+		}
+		err = rw.Flush()
+		if err != nil {
+			log.Println("压出失败:", err)
+			return
+		}
+	}
+
+	_ = s.Close()
 }
 
-func Init(cb func(ctx context.Context, host host2.Host, p peer.AddrInfo) error) error {
+func Init(handler func(s network.Stream),
+	cb func(ctx context.Context, host host2.Host, p peer.AddrInfo) error) error {
 	log.Println("初始化")
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -80,10 +103,10 @@ func Init(cb func(ctx context.Context, host host2.Host, p peer.AddrInfo) error) 
 	log.Println("我的地址:", addrs)
 
 	// 别人向你创建创建流时进行处理
-	host.SetStreamHandler(ProtocolId, handleStream)
+	host.SetStreamHandler(ProtocolId, handler)
 
 	// 创建mDNS服务并注册发现列队
-	ser, err := discovery.NewMdnsService(ctx, host, time.Second*6, "mdns-test")
+	ser, err := discovery.NewMdnsService(ctx, host, time.Hour, "mdns-test")
 	if err != nil {
 		return err
 	}
@@ -97,65 +120,25 @@ func Init(cb func(ctx context.Context, host host2.Host, p peer.AddrInfo) error) 
 		if err != nil {
 			log.Println("处理发现节点出错:", err)
 		}
-
-		//discoveryAddrs, err := peer.AddrInfoToP2pAddrs(&peer.AddrInfo{p.ID, p.Addrs})
-		//if err != nil {
-		//	return err
-		//}
-		//log.Println("发现地址:", discoveryAddrs)
 	}
-
-	//// 连接并建流
-	//err = host.Connect(ctx, p)
-	//if err != nil {
-	//	log.Println("连接失败:", err)
-	//	return err
-	//}
-	//log.Println("已经连接")
-	//s, err := host.NewStream(ctx, p.ID, ProtocolId)
-	//if err != nil {
-	//	log.Println("建流失败:", err)
-	//	return err
-	//}
-	//log.Println("已经建流")
-	//
-	//// 通信
-	//rw := bufio.NewReadWriter(bufio.NewReader(s), bufio.NewWriter(s))
-	//// 持续读取
-	//go readData(rw)
-	//// 持续回复
-	//go writeData(rw)
-	//
-	//select {}
 
 	return nil
 }
 
-func Send(ctx context.Context, host host2.Host, p peer.AddrInfo, text string) error {
-	log.Println("发送:", text)
+func Connect(ctx context.Context, host host2.Host, p peer.AddrInfo) (*bufio.ReadWriter, error) {
+	log.Println("连接节点:", p.ID.String())
 
 	// 连接并建流
 	err := host.Connect(ctx, p)
 	if err != nil {
-		log.Println("连接失败:", err)
-		return err
+		return nil, err
 	}
-	log.Println("已经连接")
 	s, err := host.NewStream(ctx, p.ID, ProtocolId)
 	if err != nil {
-		log.Println("建流失败:", err)
-		return err
+		return nil, err
 	}
-	log.Println("已经建流")
 
 	// 通信
 	rw := bufio.NewReadWriter(bufio.NewReader(s), bufio.NewWriter(s))
-	// 持续读取
-	go readData(rw)
-	// 持续回复
-	go writeData(rw)
-
-	select {}
-
-	//return nil
+	return rw, nil
 }
