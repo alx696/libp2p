@@ -39,7 +39,7 @@ func main() {
 
 	// 创建服务
 	// interval最小时间小于5秒时强制变成5秒
-	ser, err := discovery.NewMdnsService(ctx, node, time.Second*6, "mdns-psp")
+	ser, err := discovery.NewMdnsService(ctx, node, time.Second*6, "mdns-test")
 	if err != nil {
 		panic(err)
 	}

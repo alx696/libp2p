@@ -1,3 +1,6 @@
 .idea
 *.iml
 go.sum
+config
+gomobile.aar
+gomobile-sources.jar
