@@ -9,6 +9,8 @@ import (
 	"github.com/libp2p/go-libp2p-core/network"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/libp2p/go-libp2p/p2p/discovery"
+	"io"
+	"io/ioutil"
 	"log"
 	"strings"
 	"time"
@@ -20,71 +22,78 @@ type discoveryNotifee struct {
 	PeerChan chan peer.AddrInfo
 }
 
-//interface to be called when new  peer is found
+// interface to be called when new  peer is found
+// 注意:外部勿用!
 func (n *discoveryNotifee) HandlePeerFound(pi peer.AddrInfo) {
 	n.PeerChan <- pi
 }
 
-func readData(rw *bufio.ReadWriter) {
-	for {
-		str, err := rw.ReadString('\n')
-		str = strings.Replace(str, "\n", "", -1)
-		if err != nil {
-			log.Println("读取字符出错:", err)
-			return
-		}
-		log.Println("读取字符:", str)
-	}
-}
-
-func writeData(rw *bufio.ReadWriter) {
-	for {
-		_, err := rw.Write([]byte("Hi\n"))
-		if err != nil {
-			log.Println("回复失败:", err)
-			return
-		}
-		err = rw.Flush()
-		if err != nil {
-			log.Println("压出失败:", err)
-			return
-		}
-
-		time.Sleep(time.Second * 6)
-	}
-}
-
-func handleStream(s network.Stream) {
-	log.Println("处理新流")
-
-	rw := bufio.NewReadWriter(bufio.NewReader(s), bufio.NewWriter(s))
-
-	// 读取
+// 读取文本
+// 注意:不能阻塞线程,直接用里面的东西则可以!
+func ReadText(rw *bufio.ReadWriter) string {
 	str, err := rw.ReadString('\n')
-	str = strings.Replace(str, "\n", "", -1)
 	if err != nil {
-		log.Println("读取字符出错:", err)
-		return
-	}
-	log.Println("读取字符:", str)
-
-	// 回复2次
-	for i := 0; i < 2; i++ {
-		_, err := rw.Write([]byte(fmt.Sprint(time.Now().String(), "\n")))
-		if err != nil {
-			log.Println("回复失败:", err)
-			return
+		if err != io.EOF {
+			log.Println("读取文本出错:", err)
+		} else {
+			log.Println("读取文本完毕")
 		}
-		err = rw.Flush()
-		if err != nil {
-			log.Println("压出失败:", err)
-			return
-		}
+		return ""
 	}
-
-	_ = s.Close()
+	return strings.Replace(str, "\n", "", -1)
 }
 
+// 写入文本
+func WriteText(rw *bufio.ReadWriter, text string) bool {
+	_, err := rw.Write([]byte(fmt.Sprint(text, "\n")))
+	if err != nil {
+		log.Println("写入文本失败:", err)
+		return false
+	}
+	err = rw.Flush()
+	if err != nil {
+		log.Println("压出文本失败:", err)
+		return false
+	}
+	return true
+}
+
+// 读取文件
+func ReadFile(rw *bufio.ReadWriter, path string) bool {
+	fileBytes, err := rw.ReadBytes('\n')
+	if err != nil {
+		log.Println("读取文件字节出错:", err)
+		return false
+	}
+	err = ioutil.WriteFile(path, fileBytes, 0644)
+	if err != nil {
+		log.Println("保存文件出错:", err)
+		return false
+	}
+	return true
+}
+
+// 写入文件
+func WriteFile(rw *bufio.ReadWriter, path string) bool {
+	fileBytes, err := ioutil.ReadFile(path)
+	if err != nil {
+		log.Println("读取文件失败:", err)
+		return false
+	}
+	_, err = rw.Write(fileBytes)
+	if err != nil {
+		log.Println("写入文件字节失败:", err)
+		return false
+	}
+	err = rw.Flush()
+	if err != nil {
+		log.Println("压出文件字节失败:", err)
+		return false
+	}
+	return true
+}
+
+// 初始化节点
 func Init(handler func(s network.Stream),
 	cb func(ctx context.Context, host host2.Host, p peer.AddrInfo) error) error {
 	log.Println("初始化")
@@ -125,6 +134,7 @@ func Init(handler func(s network.Stream),
 	return nil
 }
 
+// 连接节点
 func Connect(ctx context.Context, host host2.Host, p peer.AddrInfo) (*bufio.ReadWriter, error) {
 	log.Println("连接节点:", p.ID.String())
 
