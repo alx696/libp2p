@@ -31,8 +31,9 @@ type discoveryNotifee struct {
 }
 
 type Message struct {
-	Type    string `json:"type"`    //文本或文件
-	Content string `json:"content"` //Type为文本时是文本内容, Type为文件时是文件名称.
+	Type     string `json:"type"`      //文本或文件
+	Content  string `json:"content"`   //Type为文本时是文本内容, Type为文件时是文件名称.
+	RemoteId string `json:"remote_id"` //发送人ID(接收时设置真实来源)
 }
 
 var fileDirectory string //文件目录
@@ -173,7 +174,8 @@ func WriteFile(rw *bufio.ReadWriter, path string) bool {
 
 // 处理进来的流
 func handleStream(s network.Stream) {
-	log.Println("处理新流")
+	remoteId := s.Conn().RemotePeer().String()
+	log.Println("处理新流:", remoteId)
 
 	rw := bufio.NewReadWriter(bufio.NewReader(s), bufio.NewWriter(s))
 
@@ -186,6 +188,7 @@ func handleStream(s network.Stream) {
 		_ = s.Close()
 		return
 	}
+	message.RemoteId = remoteId
 
 	if message.Type == "文本" {
 		// 读取文本
@@ -305,7 +308,7 @@ func SendText(id, text string) error {
 	}
 
 	// 发出
-	message := Message{"文本", text}
+	message := Message{Type: "文本", Content: text}
 	jsonBytes, err := json.Marshal(message)
 	if err != nil {
 		return err
@@ -342,7 +345,7 @@ func SendFile(id, path string) error {
 	}
 
 	// 发出
-	message := Message{"文件", filepath.Base(path)}
+	message := Message{Type: "文件", Content: filepath.Base(path)}
 	jsonBytes, err := json.Marshal(message)
 	if err != nil {
 		return err

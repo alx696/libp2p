@@ -25,7 +25,7 @@ func main() {
 	go func() {
 		for {
 			ps := im.FindPeer()
-			log.Println("现有节点", ps)
+			log.Println("现有节点:", ps)
 
 			var ids []string
 			err := json.Unmarshal([]byte(ps), &ids)
