@@ -37,7 +37,14 @@ type Message struct {
 	RemoteId string `json:"remote_id"` //发送人ID(接收时设置真实来源)
 }
 
+type Info struct {
+	Id    string `json:"id"`
+	Name  string `json:"name"`
+	Photo string `json:"photo"`
+}
+
 var fileDirectory string //文件目录
+var myInfo Info
 var ctx context.Context
 var host host2.Host
 var messageChan chan Message //缓存接收到消息的信道
@@ -211,15 +218,23 @@ func handleStream(s network.Stream) {
 	}
 
 	// 回复
-	WriteText(rw, strconv.FormatInt(time.Now().Unix(), 10))
+	if message.Type == "信息" {
+		//返回我的信息
+		jsonBytes, _ := json.Marshal(myInfo)
+		WriteText(rw, string(jsonBytes))
+	} else {
+		//返回时间
+		WriteText(rw, strconv.FormatInt(time.Now().Unix(), 10))
+	}
 
 	_ = s.Close()
 }
 
 // 初始化节点
-// dir: 末尾不带斜杠/
-func Init(dir string) error {
-	log.Println("初始化:", dir)
+// dir: 工作文件夹(末尾不带斜杠/)
+// info: 我的名字和头像图片字节的Base64字符
+func Init(dir string, info Info) error {
+	log.Println("初始化:", dir, info)
 
 	//准备文件文件夹
 	fileDirectory = fmt.Sprint(dir, "/file")
@@ -229,7 +244,7 @@ func Init(dir string) error {
 	}
 	log.Println("文件文件夹路径:", fileDirectory)
 
-	//准备缓存
+	//准备消息信道
 	messageChan = make(chan Message, 100)
 	ps = make(map[string]peer.AddrInfo)
 
@@ -257,6 +272,10 @@ func Init(dir string) error {
 		return err
 	}
 	log.Println("我的地址:", addrs)
+
+	//缓存我的信息
+	info.Id = host.ID().String()
+	myInfo = info
 
 	// 别人向你创建创建流时进行处理
 	host.SetStreamHandler(ProtocolId, handleStream)
@@ -408,6 +427,42 @@ func SendZero(id string) error {
 	log.Println("收到回复:", str)
 
 	return nil
+}
+
+// 获取信息
+func GetInfo(id string) (*string, error) {
+	log.Println("获取信息:", id)
+
+	// 创建读写器
+	rw, err := newReadWriter(id)
+	if err != nil {
+		return nil, err
+	}
+
+	// 发出
+	message := Message{Type: "信息"}
+	jsonBytes, err := json.Marshal(message)
+	if err != nil {
+		return nil, err
+	}
+	WriteText(rw, string(jsonBytes))
+
+	// 读取结果
+	str := ""
+	str, err = rw.ReadString('\n')
+	if err != nil {
+		if err != io.EOF {
+			log.Println("读取文本出错:", err)
+			return nil, err
+		} else {
+			log.Println("读取文本完毕")
+			return &str, nil
+		}
+	}
+	str = strings.Replace(str, "\n", "", -1)
+	log.Println("收到回复:", str)
+
+	return &str, nil
 }
 
 // 提取消息
