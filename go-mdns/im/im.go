@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p-core/crypto"
@@ -18,20 +19,27 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
 
 const ProtocolId = "/p2p/mdns"
 
-var ctx context.Context
-var host host2.Host
-var messageChan chan string //缓存接收到消息的信道
-var ps map[string]peer.AddrInfo
-
 type discoveryNotifee struct {
 	PeerChan chan peer.AddrInfo
 }
+
+type Message struct {
+	Type    string `json:"type"`    //文本或文件
+	Content string `json:"content"` //Type为文本时是文本内容, Type为文件时是文件名称.
+}
+
+var fileDirectory string //文件目录
+var ctx context.Context
+var host host2.Host
+var messageChan chan Message //缓存接收到消息的信道
+var ps map[string]peer.AddrInfo
 
 // interface to be called when new  peer is found
 // 注意:外部勿用!
@@ -48,7 +56,7 @@ func rsaKey(dir string) (prKey crypto.PrivKey, puKey crypto.PubKey) {
 
 	_, e := os.Stat(dir)
 	if os.IsNotExist(e) {
-		e = os.MkdirAll(dir, 0755)
+		e = os.MkdirAll(dir, os.ModePerm)
 		if e != nil {
 			log.Println("创建密钥文件夹出错:", e)
 			return
@@ -72,6 +80,30 @@ func rsaKey(dir string) (prKey crypto.PrivKey, puKey crypto.PubKey) {
 	}
 
 	return
+}
+
+// 创建读写器
+func newReadWriter(id string) (*bufio.ReadWriter, error) {
+	p, ok := ps[id]
+	if !ok {
+		return nil, errors.New("ID错误")
+	}
+
+	// 连接并建流
+	err := host.Connect(ctx, p)
+	if err != nil {
+		delete(ps, id)
+		return nil, err
+	}
+	s, err := host.NewStream(ctx, p.ID, ProtocolId)
+	if err != nil {
+		delete(ps, id)
+		return nil, err
+	}
+
+	// 创建读写器
+	rw := bufio.NewReadWriter(bufio.NewReader(s), bufio.NewWriter(s))
+	return rw, nil
 }
 
 // 读取文本
@@ -104,8 +136,8 @@ func WriteText(rw *bufio.ReadWriter, text string) bool {
 	return true
 }
 
-// 读取文件
-func ReadFile(rw *bufio.ReadWriter, path string) bool {
+// 读取文件并保存
+func ReadFileAndSave(rw *bufio.ReadWriter, path string) bool {
 	fileBytes, err := rw.ReadBytes('\n')
 	if err != nil {
 		log.Println("读取文件字节出错:", err)
@@ -139,24 +171,35 @@ func WriteFile(rw *bufio.ReadWriter, path string) bool {
 	return true
 }
 
+// 处理进来的流
 func handleStream(s network.Stream) {
 	log.Println("处理新流")
 
 	rw := bufio.NewReadWriter(bufio.NewReader(s), bufio.NewWriter(s))
 
 	// 读取
-	messageType := ReadText(rw)
-	if messageType == "文本" {
-		log.Println("文本消息")
+	messageJson := ReadText(rw)
+	var message Message
+	err := json.Unmarshal([]byte(messageJson), &message)
+	if err != nil {
+		log.Println("消息格式错误:", err)
+		_ = s.Close()
+		return
+	}
+
+	if message.Type == "文本" {
 		// 读取文本
-		messageText := ReadText(rw)
-		log.Println(messageText)
+		log.Println("文本消息:", message.Content)
 		// 存入信道等待提取
-		messageChan <- messageText
-	} else if messageType == "文件" {
+		messageChan <- message
+	} else if message.Type == "文件" {
 		log.Println("文件消息")
-		// 读取文件
-		ReadFile(rw, "/home/km/下载/r.txt")
+		// 读取文件并保存
+		filename := fmt.Sprint(time.Now().Unix(), "-", message.Content)
+		ReadFileAndSave(rw, fmt.Sprint(fileDirectory, "/", filename))
+		message.Content = filename
+		// 存入信道等待提取
+		messageChan <- message
 	}
 
 	// 回复2次
@@ -168,18 +211,27 @@ func handleStream(s network.Stream) {
 }
 
 // 初始化节点
+// dir: 末尾不带斜杠/
 func Init(dir string) error {
-	log.Println("初始化")
+	log.Println("初始化:", dir)
+
+	//准备文件文件夹
+	fileDirectory = fmt.Sprint(dir, "/file")
+	err := os.MkdirAll(fileDirectory, os.ModePerm)
+	if err != nil {
+		return err
+	}
+	log.Println("文件文件夹路径:", fileDirectory)
 
 	//准备缓存
-	messageChan = make(chan string, 100)
+	messageChan = make(chan Message, 100)
 	ps = make(map[string]peer.AddrInfo)
 
+	//准备上下文
 	var cancel context.CancelFunc
 	ctx, cancel = context.WithCancel(context.Background())
 	defer cancel()
 
-	var err error
 	//生成密钥
 	prKey, _ := rsaKey(fmt.Sprint(dir, "/rsa"))
 
@@ -244,26 +296,59 @@ func FindPeer() string {
 
 // 发送文本
 func SendText(id, text string) error {
-	log.Println("发送:", id, text)
+	log.Println("发送文本:", id, text)
 
-	p := ps[id]
-
-	// 连接并建流
-	err := host.Connect(ctx, p)
+	// 创建读写器
+	rw, err := newReadWriter(id)
 	if err != nil {
 		return err
 	}
-	s, err := host.NewStream(ctx, p.ID, ProtocolId)
-	if err != nil {
-		return err
-	}
-
-	// 通信
-	rw := bufio.NewReadWriter(bufio.NewReader(s), bufio.NewWriter(s))
 
 	// 发出
-	WriteText(rw, "文本")
-	WriteText(rw, text)
+	message := Message{"文本", text}
+	jsonBytes, err := json.Marshal(message)
+	if err != nil {
+		return err
+	}
+	WriteText(rw, string(jsonBytes))
+
+	// 读取结果
+	for {
+		str, err := rw.ReadString('\n')
+		if err != nil {
+			if err != io.EOF {
+				log.Println("读取文本出错:", err)
+				return err
+			} else {
+				log.Println("读取文本完毕")
+				break
+			}
+		}
+		str = strings.Replace(str, "\n", "", -1)
+		log.Println("收到回复:", str)
+	}
+
+	return nil
+}
+
+// 发送文件
+func SendFile(id, path string) error {
+	log.Println("发送文件:", id, path)
+
+	// 创建读写器
+	rw, err := newReadWriter(id)
+	if err != nil {
+		return err
+	}
+
+	// 发出
+	message := Message{"文件", filepath.Base(path)}
+	jsonBytes, err := json.Marshal(message)
+	if err != nil {
+		return err
+	}
+	WriteText(rw, string(jsonBytes))
+	WriteFile(rw, path)
 
 	// 读取结果
 	for {
@@ -287,7 +372,7 @@ func SendText(id, text string) error {
 // 提取消息
 // 说明: 因为Java不支持,只能弄成轮训模式.
 func ExtractMessage() string {
-	var ms []string
+	var ms []Message
 
 	select {
 	case m := <-messageChan:
