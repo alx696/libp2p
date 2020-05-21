@@ -11,7 +11,7 @@ func main() {
 	log.Println("在内网用mDNS发现节点并通信")
 
 	// /sdcard/android/data/red.lilu.red.iim/cache
-	go im.Init("./config", im.Info{Name: "电脑", Photo: "[base64]"})
+	go im.Init("./config", "电脑", "[base64]")
 
 	go func() {
 		for {
@@ -36,12 +36,12 @@ func main() {
 			for _, v := range ids {
 				//err := im.SendText(v, "你好")
 				//err := im.SendFile(v, "/home/km/下载/s.txt")
-				info, err := im.GetInfo(v)
+				infoStr, err := im.GetInfo(v)
 				if err != nil {
 					log.Println(err)
 					continue
 				}
-				log.Println("信息:", *info)
+				log.Println("信息:", infoStr)
 			}
 
 			time.Sleep(time.Second * 6)

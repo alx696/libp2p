@@ -232,9 +232,10 @@ func handleStream(s network.Stream) {
 
 // 初始化节点
 // dir: 工作文件夹(末尾不带斜杠/)
-// info: 我的名字和头像图片字节的Base64字符
-func Init(dir string, info Info) error {
-	log.Println("初始化:", dir, info)
+// name: 我的名字
+// photo: 头像图片字节的Base64字符
+func Init(dir, name, photo string) error {
+	log.Println("初始化:", dir, name, photo)
 
 	//准备文件文件夹
 	fileDirectory = fmt.Sprint(dir, "/file")
@@ -274,8 +275,7 @@ func Init(dir string, info Info) error {
 	log.Println("我的地址:", addrs)
 
 	//缓存我的信息
-	info.Id = host.ID().String()
-	myInfo = info
+	myInfo = Info{host.ID().String(), name, photo}
 
 	// 别人向你创建创建流时进行处理
 	host.SetStreamHandler(ProtocolId, handleStream)
@@ -430,39 +430,38 @@ func SendZero(id string) error {
 }
 
 // 获取信息
-func GetInfo(id string) (*string, error) {
+func GetInfo(id string) (string, error) {
 	log.Println("获取信息:", id)
 
 	// 创建读写器
 	rw, err := newReadWriter(id)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
 	// 发出
 	message := Message{Type: "信息"}
 	jsonBytes, err := json.Marshal(message)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	WriteText(rw, string(jsonBytes))
 
 	// 读取结果
-	str := ""
-	str, err = rw.ReadString('\n')
+	str, err := rw.ReadString('\n')
 	if err != nil {
 		if err != io.EOF {
 			log.Println("读取文本出错:", err)
-			return nil, err
+			return "", err
 		} else {
 			log.Println("读取文本完毕")
-			return &str, nil
+			return "", nil
 		}
 	}
 	str = strings.Replace(str, "\n", "", -1)
 	log.Println("收到回复:", str)
 
-	return &str, nil
+	return str, nil
 }
 
 // 提取消息
