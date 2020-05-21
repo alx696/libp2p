@@ -20,6 +20,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -31,7 +32,7 @@ type discoveryNotifee struct {
 }
 
 type Message struct {
-	Type     string `json:"type"`      //文本或文件
+	Type     string `json:"type"`      //探测,文本或文件
 	Content  string `json:"content"`   //Type为文本时是文本内容, Type为文件时是文件名称.
 	RemoteId string `json:"remote_id"` //发送人ID(接收时设置真实来源)
 }
@@ -199,16 +200,18 @@ func handleStream(s network.Stream) {
 		log.Println("文件消息")
 		// 读取文件并保存
 		filename := fmt.Sprint(time.Now().Unix(), "-", message.Content)
-		ReadFileAndSave(rw, fmt.Sprint(fileDirectory, "/", filename))
+		ok := ReadFileAndSave(rw, fmt.Sprint(fileDirectory, "/", filename))
+		if !ok {
+			_ = s.Close()
+			return
+		}
 		message.Content = filename
 		// 存入信道等待提取
 		messageChan <- message
 	}
 
-	// 回复2次
-	for i := 0; i < 2; i++ {
-		WriteText(rw, time.Now().String())
-	}
+	// 回复
+	WriteText(rw, strconv.FormatInt(time.Now().Unix(), 10))
 
 	_ = s.Close()
 }
@@ -368,6 +371,41 @@ func SendFile(id, path string) error {
 		str = strings.Replace(str, "\n", "", -1)
 		log.Println("收到回复:", str)
 	}
+
+	return nil
+}
+
+// 发送探测
+func SendZero(id string) error {
+	log.Println("发送探测:", id)
+
+	// 创建读写器
+	rw, err := newReadWriter(id)
+	if err != nil {
+		return err
+	}
+
+	// 发出
+	message := Message{Type: "探测"}
+	jsonBytes, err := json.Marshal(message)
+	if err != nil {
+		return err
+	}
+	WriteText(rw, string(jsonBytes))
+
+	// 读取结果
+	str, err := rw.ReadString('\n')
+	if err != nil {
+		if err != io.EOF {
+			log.Println("读取文本出错:", err)
+			return err
+		} else {
+			log.Println("读取文本完毕")
+			return nil
+		}
+	}
+	str = strings.Replace(str, "\n", "", -1)
+	log.Println("收到回复:", str)
 
 	return nil
 }

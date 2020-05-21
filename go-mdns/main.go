@@ -34,8 +34,9 @@ func main() {
 				continue
 			}
 			for _, v := range ids {
-				err := im.SendText(v, "你好")
+				//err := im.SendText(v, "你好")
 				//err := im.SendFile(v, "/home/km/下载/s.txt")
+				err := im.SendZero(v)
 				if err != nil {
 					log.Println(err)
 					continue
