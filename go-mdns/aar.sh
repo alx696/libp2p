@@ -1,9 +1,7 @@
 #!/bin/sh -e
 
-# 设置包名
-PACKAGE="im"
 # 设置目标文件夹
-TARGET_DIR="/home/km/个人/android-iim/gomobile/"
+TARGET_DIR="/home/m/dev/android-iim/gomobile/"
 
 echo "打包aar: ${PACKAGE}"
 
@@ -13,11 +11,14 @@ echo "打包aar: ${PACKAGE}"
 # 复制源码
 TEMPPATH="$GOPATH/src/lilu.red/temp"
 mkdir -p $TEMPPATH
-cp -r $PACKAGE $TEMPPATH
+# im包
+cp -r im $TEMPPATH
+# dns包
+cp -r dns $TEMPPATH
 
 # 打包(仅arm64)
 GO111MODULE="off"
-gomobile bind -v -o "${TARGET_DIR}gomobile.aar" -target=android/arm64 "${TEMPPATH}/${PACKAGE}"
+gomobile bind -v -o "${TARGET_DIR}gomobile.aar" -target=android/arm64 "${TEMPPATH}/im" "${TEMPPATH}/dns"
 rm -rf TEMPPATH
 
 echo "打包完成"
