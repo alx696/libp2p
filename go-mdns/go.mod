@@ -3,7 +3,6 @@ module github.com/alx696/go-mdns
 go 1.14
 
 require (
-	github.com/ipfs/go-dnslink v0.0.0-20200504100233-0626e50cfeaf // indirect
 	github.com/jbenet/go-is-domain v1.0.5 // indirect
 	github.com/libp2p/go-libp2p v0.8.3
 	github.com/libp2p/go-libp2p-core v0.5.6
