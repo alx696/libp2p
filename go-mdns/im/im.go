@@ -47,6 +47,8 @@ var fileDirectory string //文件目录
 var myInfo Info
 var ctx context.Context
 var host host2.Host
+var ser discovery.Service
+var pn *discoveryNotifee
 var messageChan chan Message //缓存接收到消息的信道
 var ps map[string]peer.AddrInfo
 
@@ -235,7 +237,7 @@ func handleStream(s network.Stream) {
 // name: 我的名字
 // photo: 头像图片字节的Base64字符
 func Init(dir, name, photo string) error {
-	log.Println("初始化:", dir, name, photo)
+	log.Println("初始化:", dir, name)
 
 	//准备文件文件夹
 	fileDirectory = fmt.Sprint(dir, "/file")
@@ -281,23 +283,32 @@ func Init(dir, name, photo string) error {
 	host.SetStreamHandler(ProtocolId, handleStream)
 
 	// 创建mDNS服务并注册发现列队
-	ser, err := discovery.NewMdnsService(ctx, host, time.Second*6, "mdns-test")
+	ser, err = discovery.NewMdnsService(ctx, host, time.Second*6, "mdns-test")
 	if err != nil {
 		return err
 	}
-	n := &discoveryNotifee{}
-	n.PeerChan = make(chan peer.AddrInfo)
-	ser.RegisterNotifee(n)
+	pn = &discoveryNotifee{}
+	pn.PeerChan = make(chan peer.AddrInfo)
+	ser.RegisterNotifee(pn)
 
-	// 发现节点
-	for p := range n.PeerChan {
+	// 循环发现节点
+	for p := range pn.PeerChan {
 		if _, ok := ps[p.ID.String()]; !ok {
 			log.Println("发现节点:", p.ID.String())
 			ps[p.ID.String()] = p
 		}
 	}
+	log.Println("停止发现节点")
 
 	return nil
+}
+
+// 销毁
+func Destroy() {
+	log.Println("销毁")
+	close(pn.PeerChan)
+	_ = ser.Close()
+	_ = host.Close()
 }
 
 // 获取自己ID
