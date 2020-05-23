@@ -12,10 +12,10 @@ import (
 // 参数domain: 域名 lilu.red
 // 参数t: 记录类型 https://pkg.go.dev/github.com/miekg/dns@v1.1.29?tab=doc#TypeNone
 // 返回: 文本数组的JSON字符串
-func DigShort(domain string, t uint16) string {
+func DigShort(domain string, t int) string {
 	c := new(dns.Client)
 	m := new(dns.Msg)
-	m.SetQuestion(dns.Fqdn(domain), t)
+	m.SetQuestion(dns.Fqdn(domain), uint16(t))
 	m.RecursionDesired = true
 	r, _, err := c.Exchange(m, net.JoinHostPort("223.5.5.5", "53"))
 	if r == nil {
