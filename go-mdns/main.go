@@ -8,7 +8,7 @@ import (
 func main() {
 	log.Println("在内网用mDNS发现节点并通信")
 
-	txt := dns.GetTxt("_txt.iim.app.lilu.red")
+	txt := dns.DigShort("_group._tcp.outmap.app.lilu.red", 33)
 	log.Println(txt)
 
 	//// /sdcard/android/data/red.lilu.red.iim/cache

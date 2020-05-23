@@ -8,29 +8,34 @@ import (
 	"strings"
 )
 
-// 获取域名的TXT记录(n个)的JSON字符串
-func GetTxt(domain string) string {
+// 获取记录
+// 参数domain: 域名 lilu.red
+// 参数t: 记录类型 https://pkg.go.dev/github.com/miekg/dns@v1.1.29?tab=doc#TypeNone
+// 返回: 文本数组的JSON字符串
+func DigShort(domain string, t uint16) string {
 	c := new(dns.Client)
 	m := new(dns.Msg)
-	m.SetQuestion(dns.Fqdn(domain), dns.TypeTXT)
+	m.SetQuestion(dns.Fqdn(domain), t)
 	m.RecursionDesired = true
 	r, _, err := c.Exchange(m, net.JoinHostPort("223.5.5.5", "53"))
 	if r == nil {
-		log.Println(err)
+		log.Println("查询DNS记录失败:", err)
 		return ""
 	}
 	if r.Rcode != dns.RcodeSuccess {
-		log.Println("获取结果失败", r.Rcode)
+		log.Println("查询DNS记录失败:", r.Rcode)
 		return ""
 	}
 
-	resultMap := make(map[string]string)
+	var ta []string
 	for _, a := range r.Answer {
 		txt := strings.ReplaceAll(a.String(), a.Header().String(), "")
-		txt = txt[1 : len(txt)-1]
-		kv := strings.Split(txt, "=")
-		resultMap[kv[0]] = kv[1]
+		ta = append(ta, txt)
 	}
-	jsonBytes, _ := json.Marshal(resultMap)
-	return string(jsonBytes)
+	jsonBytes, _ := json.Marshal(ta)
+	result := string(jsonBytes)
+	if result == "null" {
+		result = "[]"
+	}
+	return result
 }
