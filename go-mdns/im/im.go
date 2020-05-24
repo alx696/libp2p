@@ -298,19 +298,12 @@ func handleStream(s network.Stream) {
 }
 
 // 初始化节点
-// dir: 工作文件夹(末尾不带斜杠/)
+// keyDirectory: Key目录(末尾不带斜杠/)
+// fileDirectory: 文件目录(末尾不带斜杠/)
 // name: 我的名字
 // photo: 头像图片字节的Base64字符
-func Init(dir, name, photo string) error {
-	log.Println("初始化:", dir, name)
-
-	//准备文件文件夹
-	fileDirectory = fmt.Sprint(dir, "/file")
-	err := os.MkdirAll(fileDirectory, os.ModePerm)
-	if err != nil {
-		return err
-	}
-	log.Println("文件文件夹路径:", fileDirectory)
+func Init(keyDirectory, fileDirectory, name, photo string) error {
+	log.Println("初始化:", keyDirectory, fileDirectory, name)
 
 	//准备消息信道
 	messageChan = make(chan Message, 100)
@@ -322,8 +315,9 @@ func Init(dir, name, photo string) error {
 	defer cancel()
 
 	//生成密钥
-	prKey, _ := rsaKey(fmt.Sprint(dir, "/rsa"))
+	prKey, _ := rsaKey(keyDirectory)
 
+	var err error
 	host, err = libp2p.New(
 		ctx,
 		libp2p.Identity(prKey),
