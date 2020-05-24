@@ -31,12 +31,14 @@ type discoveryNotifee struct {
 	PeerChan chan peer.AddrInfo
 }
 
+// 消息
+// 如果是文件, FileName和FileSize必须设置.
 type Message struct {
-	Type     string `json:"type"`      //探测,文本或文件
-	Content  string `json:"content"`   //Type为文本时是文本内容, Type为文件时是文件名称.
-	RemoteId string `json:"remote_id"` //发送人ID(接收时设置真实来源)
+	Text     string `json:"text"`      //文本
+	FileName string `json:"file_name"` //文件名称
+	FileSize int64  `json:"file_size"` //文件大小(字节数量)
+	FromId   string `json:"from_id"`   //发送人ID(接收时设置真实来源)
 	Ts       int64  `json:"ts"`        //接收时间
-	FileSize int64  `json:"file_size"` //文件大小
 }
 
 type Info struct {
@@ -146,6 +148,13 @@ func writeText(rw *bufio.ReadWriter, text string) error {
 
 // 从读写器中读取文件并保存
 func readFileAndSave(rw *bufio.ReadWriter, path string, fileSize int64) error {
+	//如果预期路径已经存在则重命名
+	_, err := os.Stat(path)
+	if err == nil {
+		fileExt := filepath.Ext(path)
+		path = fmt.Sprint(filepath.Dir(path), "/", strings.Replace(filepath.Base(path), fileExt, "", 1), "(", time.Now().Unix(), ")", fileExt)
+	}
+
 	f, err := os.Create(path)
 	defer f.Close()
 	if err != nil {
@@ -261,30 +270,28 @@ func handleStream(s network.Stream) {
 		_ = s.Close()
 		return
 	}
-	message.RemoteId = remoteId
+	message.FromId = remoteId
 	message.Ts = time.Now().UnixNano() / 1e6
 
-	if message.Type == "文本" {
+	if message.Text != "" {
 		// 读取文本
-		log.Println("文本消息:", message.Content)
+		log.Println("收到文本消息:", message.Text)
 		// 存入信道等待提取
 		messageChan <- message
-	} else if message.Type == "文件" {
+	} else if message.FileSize != 0 {
 		log.Println("文件消息")
 		// 读取文件并保存
-		filename := fmt.Sprint(time.Now().Unix(), "-", message.Content)
-		err = readFileAndSave(rw, fmt.Sprint(fileDir, "/", filename), message.FileSize)
+		err = readFileAndSave(rw, fmt.Sprint(fileDir, "/", message.FileName), message.FileSize)
 		if err != nil {
 			_ = s.Close()
 			return
 		}
-		message.Content = filename
 		// 存入信道等待提取
 		messageChan <- message
 	}
 
 	// 回复
-	if message.Type == "信息" {
+	if message.Text == "" && message.FileSize == 0 {
 		//返回我的信息
 		jsonBytes, _ := json.Marshal(myInfo)
 		_ = writeText(rw, string(jsonBytes))
@@ -402,7 +409,7 @@ func SendText(id, text string) (string, error) {
 	}
 
 	// 发出
-	message := Message{Type: "文本", Content: text}
+	message := Message{Text: text}
 	jsonBytes, err := json.Marshal(message)
 	if err != nil {
 		return "", err
@@ -443,7 +450,7 @@ func SendFile(id, path string) (string, error) {
 	}
 
 	// 发出
-	message := Message{Type: "文件", Content: filepath.Base(path), FileSize: fs.Size()}
+	message := Message{FileName: filepath.Base(path), FileSize: fs.Size()}
 	jsonBytes, err := json.Marshal(message)
 	if err != nil {
 		return "", err
@@ -476,36 +483,7 @@ func GetInfo(id string) (string, error) {
 	}
 
 	// 发出
-	message := Message{Type: "信息"}
-	jsonBytes, err := json.Marshal(message)
-	if err != nil {
-		return "", err
-	}
-	err = writeText(rw, string(jsonBytes))
-	if err != nil {
-		return "", err
-	}
-
-	// 读取结果
-	str, err := readText(rw)
-	if err != nil {
-		return "", err
-	}
-	return str, nil
-}
-
-// 发送探测
-func SendZero(id string) (string, error) {
-	log.Println("发送探测:", id)
-
-	// 创建读写器
-	rw, err := newReadWriter(id)
-	if err != nil {
-		return "", err
-	}
-
-	// 发出
-	message := Message{Type: "探测"}
+	message := Message{}
 	jsonBytes, err := json.Marshal(message)
 	if err != nil {
 		return "", err
