@@ -12,4 +12,5 @@ require (
 	github.com/miekg/dns v1.1.29
 	github.com/multiformats/go-multiaddr-net v0.1.5 // indirect
 	golang.org/x/crypto v0.0.0-20200423211502-4bdfaf469ed5 // indirect
+	golang.org/x/text v0.3.2
 )

@@ -36,6 +36,7 @@ type Message struct {
 	Content  string `json:"content"`   //Type为文本时是文本内容, Type为文件时是文件名称.
 	RemoteId string `json:"remote_id"` //发送人ID(接收时设置真实来源)
 	Ts       int64  `json:"ts"`        //接收时间
+	FileSize int64  `json:"file_size"` //文件大小
 }
 
 type Info struct {
@@ -149,37 +150,99 @@ func WriteText(rw *bufio.ReadWriter, text string) bool {
 }
 
 // 读取文件并保存
-func ReadFileAndSave(rw *bufio.ReadWriter, path string) bool {
-	fileBytes, err := rw.ReadBytes('\n')
+func ReadFileAndSave(rw *bufio.ReadWriter, path string, fileSize int64) bool {
+	f, err := os.Create(path)
+	defer f.Close()
 	if err != nil {
-		log.Println("读取文件字节出错:", err)
+		log.Println("创建文件出错:", err)
 		return false
 	}
-	err = ioutil.WriteFile(path, fileBytes, 0644)
-	if err != nil {
-		log.Println("保存文件出错:", err)
-		return false
+
+	var sizeSum int64
+	buf := make([]byte, 1048576)
+	for {
+		n, err := rw.Read(buf)
+		if err == io.EOF {
+			//永远不会触发!!! 除非流关闭
+			break
+		} else if err != nil {
+			log.Println("流中读取字节失败:", err)
+			return false
+		}
+		//size := int64(binary.LittleEndian.Uint64(buf[0:8]))
+		//log.Println("总共大小:", size)
+		log.Println("收到:", n)
+		_, err = f.Write(buf[0:n])
+		if err != nil {
+			log.Println("文件写入字节出错:", err)
+			return false
+		}
+		sizeSum += int64(n)
+		log.Println(sizeSum, fileSize)
+		if sizeSum == fileSize {
+			log.Println("文件读取完毕")
+			break
+		}
 	}
+
+	//for {
+	//	someBytes, err := rw.ReadBytes('\n')
+	//	if err == io.EOF {
+	//		//永远不会触发?!
+	//		log.Println("流中读取字节完毕(EOF)")
+	//		break
+	//	} else if err != nil {
+	//		log.Println("流中读取字节失败:", err)
+	//		return false
+	//	}
+	//	log.Println("读到数量:", len(someBytes))
+	//	_, err = f.Write(someBytes)
+	//	if err != nil {
+	//		log.Println("文件写入字节出错:", err)
+	//		return false
+	//	}
+	//}
+
 	return true
 }
 
 // 写入文件
 func WriteFile(rw *bufio.ReadWriter, path string) bool {
-	fileBytes, err := ioutil.ReadFile(path)
+	f, err := os.Open(path)
+	defer f.Close()
 	if err != nil {
-		log.Println("读取文件失败:", err)
+		log.Println("打开文件出错:", err)
 		return false
 	}
-	_, err = rw.Write(fileBytes)
-	if err != nil {
-		log.Println("写入文件字节失败:", err)
-		return false
+
+	buf := make([]byte, 1048576)
+	for {
+		n, err := f.Read(buf)
+		if err == io.EOF {
+			log.Println("文件中读取字节完毕(EOF)")
+			break
+		} else if err != nil {
+			log.Println("文件中读取字节失败:", err)
+			return false
+		}
+		wn, err := rw.Write(buf[0:n])
+		if err != nil {
+			log.Println("流中写入字节失败:", err)
+			return false
+		}
+		log.Println("流中写入字节数量:", wn)
+		err = rw.Flush()
+		if err != nil {
+			log.Println("流中压出字节失败:", err)
+			return false
+		}
+		err = rw.Flush()
+		if err != nil {
+			log.Println("流中压出字节失败:", err)
+			return false
+		}
 	}
-	err = rw.Flush()
-	if err != nil {
-		log.Println("压出文件字节失败:", err)
-		return false
-	}
+
 	return true
 }
 
@@ -211,7 +274,7 @@ func handleStream(s network.Stream) {
 		log.Println("文件消息")
 		// 读取文件并保存
 		filename := fmt.Sprint(time.Now().Unix(), "-", message.Content)
-		ok := ReadFileAndSave(rw, fmt.Sprint(fileDirectory, "/", filename))
+		ok := ReadFileAndSave(rw, fmt.Sprint(fileDirectory, "/", filename), message.FileSize)
 		if !ok {
 			_ = s.Close()
 			return
@@ -354,22 +417,32 @@ func SendText(id, text string) (string, error) {
 	str, err := rw.ReadString('\n')
 	if err != nil {
 		if err != io.EOF {
-			log.Println("读取文本出错:", err)
+			log.Println("读取结果文本出错:", err)
 			return "", err
 		} else {
-			log.Println("读取文本完毕")
-			return "", nil
+			log.Println("读取结果文本完毕")
 		}
 	}
 	str = strings.Replace(str, "\n", "", -1)
 	log.Println("收到回复:", str)
-
 	return str, nil
 }
 
 // 发送文件
 func SendFile(id, path string) (string, error) {
 	log.Println("发送文件:", id, path)
+
+	f, err := os.Open(path)
+	defer f.Close()
+	if err != nil {
+		log.Println("打开文件出错:", err)
+		return "", err
+	}
+	fs, err := f.Stat()
+	if err != nil {
+		log.Println("获取文件信息出错:", err)
+		return "", err
+	}
 
 	// 创建读写器
 	rw, err := newReadWriter(id)
@@ -378,7 +451,7 @@ func SendFile(id, path string) (string, error) {
 	}
 
 	// 发出
-	message := Message{Type: "文件", Content: filepath.Base(path)}
+	message := Message{Type: "文件", Content: filepath.Base(path), FileSize: fs.Size()}
 	jsonBytes, err := json.Marshal(message)
 	if err != nil {
 		return "", err
@@ -390,16 +463,14 @@ func SendFile(id, path string) (string, error) {
 	str, err := rw.ReadString('\n')
 	if err != nil {
 		if err != io.EOF {
-			log.Println("读取文本出错:", err)
+			log.Println("读取结果文本出错:", err)
 			return "", err
 		} else {
-			log.Println("读取文本完毕")
-			return "", nil
+			log.Println("读取结果文本完毕")
 		}
 	}
 	str = strings.Replace(str, "\n", "", -1)
 	log.Println("收到回复:", str)
-
 	return str, nil
 }
 

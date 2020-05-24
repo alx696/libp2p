@@ -1,10 +1,8 @@
 package main
 
 import (
-	"encoding/json"
 	"github.com/alx696/go-mdns/im"
 	"log"
-	"time"
 )
 
 func main() {
@@ -30,31 +28,31 @@ func main() {
 	//	}
 	//}()
 
-	go func() {
-		for {
-			ps := im.FindPeer()
-			log.Println("现有节点:", ps)
-
-			var ids []string
-			err := json.Unmarshal([]byte(ps), &ids)
-			if err != nil {
-				log.Println(err)
-				continue
-			}
-			for _, v := range ids {
-				//err := im.SendText(v, "你好")
-				//err := im.SendFile(v, "/home/km/下载/s.txt")
-				infoStr, err := im.GetInfo(v)
-				if err != nil {
-					log.Println(err)
-					continue
-				}
-				log.Println("信息:", infoStr)
-			}
-
-			time.Sleep(time.Second * 6)
-		}
-	}()
+	//go func() {
+	//	for {
+	//		ps := im.FindPeer()
+	//		log.Println("现有节点:", ps)
+	//
+	//		var ids []string
+	//		err := json.Unmarshal([]byte(ps), &ids)
+	//		if err != nil {
+	//			log.Println(err)
+	//			continue
+	//		}
+	//		for _, v := range ids {
+	//			//err := im.SendText(v, "你好")
+	//			result, err := im.SendFile(v, "/home/m/下载/a.ttf")
+	//			//infoStr, err := im.GetInfo(v)
+	//			if err != nil {
+	//				log.Println(err)
+	//				continue
+	//			}
+	//			log.Println("结果:", result)
+	//		}
+	//
+	//		time.Sleep(time.Second * 6)
+	//	}
+	//}()
 
 	select {}
 }
