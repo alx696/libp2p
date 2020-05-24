@@ -35,6 +35,7 @@ type Message struct {
 	Type     string `json:"type"`      //探测,文本或文件
 	Content  string `json:"content"`   //Type为文本时是文本内容, Type为文件时是文件名称.
 	RemoteId string `json:"remote_id"` //发送人ID(接收时设置真实来源)
+	Ts       int64  `json:"ts"`        //接收时间
 }
 
 type Info struct {
@@ -199,6 +200,7 @@ func handleStream(s network.Stream) {
 		return
 	}
 	message.RemoteId = remoteId
+	message.Ts = time.Now().UnixNano() / 1e6
 
 	if message.Type == "文本" {
 		// 读取文本
@@ -331,78 +333,74 @@ func FindPeer() string {
 }
 
 // 发送文本
-func SendText(id, text string) error {
+func SendText(id, text string) (string, error) {
 	log.Println("发送文本:", id, text)
 
 	// 创建读写器
 	rw, err := newReadWriter(id)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	// 发出
 	message := Message{Type: "文本", Content: text}
 	jsonBytes, err := json.Marshal(message)
 	if err != nil {
-		return err
+		return "", err
 	}
 	WriteText(rw, string(jsonBytes))
 
 	// 读取结果
-	for {
-		str, err := rw.ReadString('\n')
-		if err != nil {
-			if err != io.EOF {
-				log.Println("读取文本出错:", err)
-				return err
-			} else {
-				log.Println("读取文本完毕")
-				break
-			}
+	str, err := rw.ReadString('\n')
+	if err != nil {
+		if err != io.EOF {
+			log.Println("读取文本出错:", err)
+			return "", err
+		} else {
+			log.Println("读取文本完毕")
+			return "", nil
 		}
-		str = strings.Replace(str, "\n", "", -1)
-		log.Println("收到回复:", str)
 	}
+	str = strings.Replace(str, "\n", "", -1)
+	log.Println("收到回复:", str)
 
-	return nil
+	return str, nil
 }
 
 // 发送文件
-func SendFile(id, path string) error {
+func SendFile(id, path string) (string, error) {
 	log.Println("发送文件:", id, path)
 
 	// 创建读写器
 	rw, err := newReadWriter(id)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	// 发出
 	message := Message{Type: "文件", Content: filepath.Base(path)}
 	jsonBytes, err := json.Marshal(message)
 	if err != nil {
-		return err
+		return "", err
 	}
 	WriteText(rw, string(jsonBytes))
 	WriteFile(rw, path)
 
 	// 读取结果
-	for {
-		str, err := rw.ReadString('\n')
-		if err != nil {
-			if err != io.EOF {
-				log.Println("读取文本出错:", err)
-				return err
-			} else {
-				log.Println("读取文本完毕")
-				break
-			}
+	str, err := rw.ReadString('\n')
+	if err != nil {
+		if err != io.EOF {
+			log.Println("读取文本出错:", err)
+			return "", err
+		} else {
+			log.Println("读取文本完毕")
+			return "", nil
 		}
-		str = strings.Replace(str, "\n", "", -1)
-		log.Println("收到回复:", str)
 	}
+	str = strings.Replace(str, "\n", "", -1)
+	log.Println("收到回复:", str)
 
-	return nil
+	return str, nil
 }
 
 // 发送探测
