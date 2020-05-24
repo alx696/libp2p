@@ -25,7 +25,7 @@ import (
 	"time"
 )
 
-const ProtocolId = "/p2p/mdns"
+const ProtocolId = "/p2p/mdns/iim"
 
 type discoveryNotifee struct {
 	PeerChan chan peer.AddrInfo
@@ -45,7 +45,7 @@ type Info struct {
 	Photo string `json:"photo"`
 }
 
-var fileDirectory string //文件目录
+var fileDir string //文件目录
 var myInfo Info
 var ctx context.Context
 var host host2.Host
@@ -119,43 +119,38 @@ func newReadWriter(id string) (*bufio.ReadWriter, error) {
 	return rw, nil
 }
 
-// 读取文本
-// 注意:不能阻塞线程,直接用里面的东西则可以!
-func ReadText(rw *bufio.ReadWriter) string {
+// 从读写器中读取文本
+func readText(rw *bufio.ReadWriter) (string, error) {
 	str, err := rw.ReadString('\n')
 	if err != nil {
-		if err != io.EOF {
-			log.Println("读取文本出错:", err)
-		} else {
-			log.Println("读取文本完毕")
-		}
-		return ""
+		log.Println("读取文本出错:", err)
+		return "", err
 	}
-	return strings.Replace(str, "\n", "", -1)
+	return strings.Replace(str, "\n", "", -1), nil
 }
 
-// 写入文本
-func WriteText(rw *bufio.ReadWriter, text string) bool {
+// 往读写器中写入文本
+func writeText(rw *bufio.ReadWriter, text string) error {
 	_, err := rw.Write([]byte(fmt.Sprint(text, "\n")))
 	if err != nil {
 		log.Println("写入文本失败:", err)
-		return false
+		return err
 	}
 	err = rw.Flush()
 	if err != nil {
 		log.Println("压出文本失败:", err)
-		return false
+		return err
 	}
-	return true
+	return nil
 }
 
-// 读取文件并保存
-func ReadFileAndSave(rw *bufio.ReadWriter, path string, fileSize int64) bool {
+// 从读写器中读取文件并保存
+func readFileAndSave(rw *bufio.ReadWriter, path string, fileSize int64) error {
 	f, err := os.Create(path)
 	defer f.Close()
 	if err != nil {
 		log.Println("创建文件出错:", err)
-		return false
+		return err
 	}
 
 	var sizeSum int64
@@ -167,7 +162,7 @@ func ReadFileAndSave(rw *bufio.ReadWriter, path string, fileSize int64) bool {
 			break
 		} else if err != nil {
 			log.Println("流中读取字节失败:", err)
-			return false
+			return err
 		}
 		//size := int64(binary.LittleEndian.Uint64(buf[0:8]))
 		//log.Println("总共大小:", size)
@@ -175,7 +170,7 @@ func ReadFileAndSave(rw *bufio.ReadWriter, path string, fileSize int64) bool {
 		_, err = f.Write(buf[0:n])
 		if err != nil {
 			log.Println("文件写入字节出错:", err)
-			return false
+			return err
 		}
 		sizeSum += int64(n)
 		log.Println(sizeSum, fileSize)
@@ -203,16 +198,16 @@ func ReadFileAndSave(rw *bufio.ReadWriter, path string, fileSize int64) bool {
 	//	}
 	//}
 
-	return true
+	return nil
 }
 
-// 写入文件
-func WriteFile(rw *bufio.ReadWriter, path string) bool {
+// 往读写器中写入文件
+func writeFile(rw *bufio.ReadWriter, path string) error {
 	f, err := os.Open(path)
 	defer f.Close()
 	if err != nil {
 		log.Println("打开文件出错:", err)
-		return false
+		return err
 	}
 
 	buf := make([]byte, 1048576)
@@ -223,27 +218,27 @@ func WriteFile(rw *bufio.ReadWriter, path string) bool {
 			break
 		} else if err != nil {
 			log.Println("文件中读取字节失败:", err)
-			return false
+			return err
 		}
 		wn, err := rw.Write(buf[0:n])
 		if err != nil {
 			log.Println("流中写入字节失败:", err)
-			return false
+			return err
 		}
 		log.Println("流中写入字节数量:", wn)
 		err = rw.Flush()
 		if err != nil {
 			log.Println("流中压出字节失败:", err)
-			return false
+			return err
 		}
 		err = rw.Flush()
 		if err != nil {
 			log.Println("流中压出字节失败:", err)
-			return false
+			return err
 		}
 	}
 
-	return true
+	return nil
 }
 
 // 处理进来的流
@@ -254,9 +249,13 @@ func handleStream(s network.Stream) {
 	rw := bufio.NewReadWriter(bufio.NewReader(s), bufio.NewWriter(s))
 
 	// 读取
-	messageJson := ReadText(rw)
+	jsonText, err := readText(rw)
+	if err != nil {
+		_ = s.Close()
+		return
+	}
 	var message Message
-	err := json.Unmarshal([]byte(messageJson), &message)
+	err = json.Unmarshal([]byte(jsonText), &message)
 	if err != nil {
 		log.Println("消息格式错误:", err)
 		_ = s.Close()
@@ -274,8 +273,8 @@ func handleStream(s network.Stream) {
 		log.Println("文件消息")
 		// 读取文件并保存
 		filename := fmt.Sprint(time.Now().Unix(), "-", message.Content)
-		ok := ReadFileAndSave(rw, fmt.Sprint(fileDirectory, "/", filename), message.FileSize)
-		if !ok {
+		err = readFileAndSave(rw, fmt.Sprint(fileDir, "/", filename), message.FileSize)
+		if err != nil {
 			_ = s.Close()
 			return
 		}
@@ -288,10 +287,10 @@ func handleStream(s network.Stream) {
 	if message.Type == "信息" {
 		//返回我的信息
 		jsonBytes, _ := json.Marshal(myInfo)
-		WriteText(rw, string(jsonBytes))
+		_ = writeText(rw, string(jsonBytes))
 	} else {
 		//返回时间
-		WriteText(rw, strconv.FormatInt(time.Now().Unix(), 10))
+		_ = writeText(rw, strconv.FormatInt(time.Now().UnixNano()/1e6, 10))
 	}
 
 	_ = s.Close()
@@ -304,6 +303,8 @@ func handleStream(s network.Stream) {
 // photo: 头像图片字节的Base64字符
 func Init(keyDirectory, fileDirectory, name, photo string) error {
 	log.Println("初始化:", keyDirectory, fileDirectory, name)
+
+	fileDir = fileDirectory
 
 	//准备消息信道
 	messageChan = make(chan Message, 100)
@@ -371,11 +372,12 @@ func Destroy() {
 }
 
 // 获取自己ID
-func GetSelfId() string {
+func GetMyId() string {
 	return host.ID().String()
 }
 
 // 获取节点
+// 说明: 因为Java不支持,只能弄成轮训模式.
 func FindPeer() string {
 	var ids []string
 	for k, _ := range ps {
@@ -405,20 +407,16 @@ func SendText(id, text string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	WriteText(rw, string(jsonBytes))
+	err = writeText(rw, string(jsonBytes))
+	if err != nil {
+		return "", err
+	}
 
 	// 读取结果
-	str, err := rw.ReadString('\n')
+	str, err := readText(rw)
 	if err != nil {
-		if err != io.EOF {
-			log.Println("读取结果文本出错:", err)
-			return "", err
-		} else {
-			log.Println("读取结果文本完毕")
-		}
+		return "", err
 	}
-	str = strings.Replace(str, "\n", "", -1)
-	log.Println("收到回复:", str)
 	return str, nil
 }
 
@@ -450,57 +448,21 @@ func SendFile(id, path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	WriteText(rw, string(jsonBytes))
-	WriteFile(rw, path)
+	err = writeText(rw, string(jsonBytes))
+	if err != nil {
+		return "", err
+	}
+	err = writeFile(rw, path)
+	if err != nil {
+		return "", err
+	}
 
 	// 读取结果
-	str, err := rw.ReadString('\n')
+	str, err := readText(rw)
 	if err != nil {
-		if err != io.EOF {
-			log.Println("读取结果文本出错:", err)
-			return "", err
-		} else {
-			log.Println("读取结果文本完毕")
-		}
+		return "", err
 	}
-	str = strings.Replace(str, "\n", "", -1)
-	log.Println("收到回复:", str)
 	return str, nil
-}
-
-// 发送探测
-func SendZero(id string) error {
-	log.Println("发送探测:", id)
-
-	// 创建读写器
-	rw, err := newReadWriter(id)
-	if err != nil {
-		return err
-	}
-
-	// 发出
-	message := Message{Type: "探测"}
-	jsonBytes, err := json.Marshal(message)
-	if err != nil {
-		return err
-	}
-	WriteText(rw, string(jsonBytes))
-
-	// 读取结果
-	str, err := rw.ReadString('\n')
-	if err != nil {
-		if err != io.EOF {
-			log.Println("读取文本出错:", err)
-			return err
-		} else {
-			log.Println("读取文本完毕")
-			return nil
-		}
-	}
-	str = strings.Replace(str, "\n", "", -1)
-	log.Println("收到回复:", str)
-
-	return nil
 }
 
 // 获取信息
@@ -519,27 +481,50 @@ func GetInfo(id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	WriteText(rw, string(jsonBytes))
+	err = writeText(rw, string(jsonBytes))
+	if err != nil {
+		return "", err
+	}
 
 	// 读取结果
-	str, err := rw.ReadString('\n')
+	str, err := readText(rw)
 	if err != nil {
-		if err != io.EOF {
-			log.Println("读取文本出错:", err)
-			return "", err
-		} else {
-			log.Println("读取文本完毕")
-			return "", nil
-		}
+		return "", err
 	}
-	str = strings.Replace(str, "\n", "", -1)
-	log.Println("收到回复:", str)
+	return str, nil
+}
 
+// 发送探测
+func SendZero(id string) (string, error) {
+	log.Println("发送探测:", id)
+
+	// 创建读写器
+	rw, err := newReadWriter(id)
+	if err != nil {
+		return "", err
+	}
+
+	// 发出
+	message := Message{Type: "探测"}
+	jsonBytes, err := json.Marshal(message)
+	if err != nil {
+		return "", err
+	}
+	err = writeText(rw, string(jsonBytes))
+	if err != nil {
+		return "", err
+	}
+
+	// 读取结果
+	str, err := readText(rw)
+	if err != nil {
+		return "", err
+	}
 	return str, nil
 }
 
 // 提取消息
-// 说明: 因为Java不支持,只能弄成轮训模式.
+// 说明: 因为Java不支持,只能弄成轮训模式. 消息信道只有100容量, 入股并发量大应提升提取频率.
 func ExtractMessage() string {
 	var ms []Message
 
