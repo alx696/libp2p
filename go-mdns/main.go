@@ -14,7 +14,8 @@ func main() {
 	//log.Println(txt)
 
 	// /sdcard/android/data/red.lilu.red.iim/cache
-	go im.Init("./config/rsa", "./config/file", "电脑", "[bytes base64]")
+	go im.Init("./config/private", "./config/public", "./config/file",
+		"电脑", "[bytes base64]")
 
 	//go func() {
 	//	time.Sleep(time.Second * 6)

@@ -62,32 +62,24 @@ func (n *discoveryNotifee) HandlePeerFound(pi peer.AddrInfo) {
 	n.PeerChan <- pi
 }
 
-// 生成或读取密钥
-// 注意: Android可用"/sdcard/rsa"定位到存储中rsa文件夹, 但记得在应用权限中申请写外部存储权限.
-func rsaKey(dir string) (prKey crypto.PrivKey, puKey crypto.PubKey) {
-	log.Println("密钥文件夹路径:", dir)
-	privatePath := strings.Join([]string{dir, "private"}, "/")
-	publicPath := strings.Join([]string{dir, "public"}, "/")
+// 获取或生成密钥
+func getOrGenerateKey(privatePath, publicPath string) (prKey crypto.PrivKey, puKey crypto.PubKey) {
+	log.Println("密钥路径:", privatePath, publicPath)
 
-	_, e := os.Stat(dir)
+	_, e := os.Stat(privatePath)
 	if os.IsNotExist(e) {
-		e = os.MkdirAll(dir, os.ModePerm)
-		if e != nil {
-			log.Println("创建密钥文件夹出错:", e)
-			return
-		}
-
+		log.Println("生成密钥")
 		//生成密钥
 		rr := rand.Reader
 		prKey, puKey, _ = crypto.GenerateKeyPairWithReader(crypto.Ed25519, -1, rr)
 
 		//存储密钥
 		privateKeyBytes, _ := crypto.MarshalPrivateKey(prKey)
-		_ = ioutil.WriteFile(privatePath, privateKeyBytes, 0644)
+		_ = ioutil.WriteFile(privatePath, privateKeyBytes, os.ModePerm)
 		publicKeyBytes, _ := crypto.MarshalPublicKey(puKey)
-		_ = ioutil.WriteFile(publicPath, publicKeyBytes, 0644)
+		_ = ioutil.WriteFile(publicPath, publicKeyBytes, os.ModePerm)
 	} else {
-		//还原密钥
+		log.Println("读取密钥")
 		privateKeyBytes, _ := ioutil.ReadFile(privatePath)
 		publicKeyBytes, _ := ioutil.ReadFile(publicPath)
 		prKey, _ = crypto.UnmarshalPrivateKey(privateKeyBytes)
@@ -303,13 +295,14 @@ func handleStream(s network.Stream) {
 	_ = s.Close()
 }
 
-// 初始化节点
-// keyDirectory: Key目录(末尾不带斜杠/)
+// 初始节点
+// privateKeyPath: 密钥文件路径
+// publicKeyPath: 公钥文件路径
 // fileDirectory: 文件目录(末尾不带斜杠/)
 // name: 我的名字
 // photo: 头像图片字节的Base64字符
-func Init(keyDirectory, fileDirectory, name, photo string) error {
-	log.Println("初始化:", keyDirectory, fileDirectory, name)
+func Init(privateKeyPath, publicKeyPath, fileDirectory, name, photo string) error {
+	log.Println("初始:", fileDirectory, name)
 
 	fileDir = fileDirectory
 
@@ -322,13 +315,14 @@ func Init(keyDirectory, fileDirectory, name, photo string) error {
 	ctx, cancel = context.WithCancel(context.Background())
 	defer cancel()
 
-	//生成密钥
-	prKey, _ := rsaKey(keyDirectory)
+	//获取密钥
+	privateKey, _ := getOrGenerateKey(privateKeyPath, publicKeyPath)
+	log.Println("密钥类型:", privateKey.Type().String())
 
 	var err error
 	host, err = libp2p.New(
 		ctx,
-		libp2p.Identity(prKey),
+		libp2p.Identity(privateKey),
 		// support TLS connections
 		libp2p.Security(libp2ptls.ID, libp2ptls.New),
 		// support secio connections

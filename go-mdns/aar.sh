@@ -1,7 +1,7 @@
 #!/bin/sh -e
 
 # 设置目标文件夹
-TARGET_DIR="/home/m/dev/android-iim/gomobile/"
+TARGET_DIR="/home/km/个人/android-iim/gomobile/"
 
 echo "打包aar: ${PACKAGE}"
 
