@@ -44,7 +44,7 @@ type Message struct {
 type Info struct {
 	Id    string `json:"id"`
 	Name  string `json:"name"`
-	Photo string `json:"photo"`
+	Photo string `json:"photo"` //Base64编码的字节,并非图片!
 }
 
 var fileDir string //文件目录
